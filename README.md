@@ -9,15 +9,23 @@ package to create new connections with the new connection parameters.
 
 ```go
 import (
+    // import the std lib sql package
     "database/sql"
 
     log "github.com/sirupsen/logrus"
+
+    // this import registers hotload with the sql package
     "github.com/infobloxopen/hotload"
+
+    // this import registers the fsnotify hotload strategy
     _ "github.com/infobloxopen/hotload/fsnotify"
+
+    // this import registers the postgres driver with the sql package
     "github.com/lib/pq"
 )
 
 func init() {
+    // this function call registers the lib/pq postgres driver with hotload
     hotdriver.Register("postgres", pq.Driver{})
 }
 
