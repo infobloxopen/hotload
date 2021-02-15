@@ -1,3 +1,4 @@
+[![Go Reference](https://pkg.go.dev/badge/github.com/infobloxopen/hotload.svg)](https://pkg.go.dev/github.com/infobloxopen/hotload)
 # hotload
 Hotload is a golang database/sql that supports dynamic reloading
 of database configuration. In the typical use of sql.Open(), users must
