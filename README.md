@@ -31,7 +31,7 @@ func init() {
 }
 
 func main() {
-    db, err := sql.Open("hotdriver", "fsnotify://postgres/tmp/myconfig.txt")
+    db, err := sql.Open("hotload", "fsnotify://postgres/tmp/myconfig.txt")
     if err != nil {
         log.Fatalf("could not open db connection: %s", err)
     }
