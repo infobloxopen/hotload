@@ -1,6 +1,6 @@
 // Package hotload is a database/sql driver that dynamically loads connection strings for other
 // database drivers. To use it, import it like any other database driver and register
-// the real database driver you want to use with hotdriver.
+// the real database driver you want to use with hotload.
 //
 //     import (
 //         // import the std lib sql package
@@ -64,9 +64,9 @@ type Strategy interface {
 }
 
 var (
-	ErrUnsupportedStrategy       = fmt.Errorf("unsupported hotdriver strategy")
-	ErrMalformedConnectionString = fmt.Errorf("malformed hotdriver connection string")
-	ErrUnknownDriver             = fmt.Errorf("target driver is not registered with hotdriver")
+	ErrUnsupportedStrategy       = fmt.Errorf("unsupported hotload strategy")
+	ErrMalformedConnectionString = fmt.Errorf("malformed hotload connection string")
+	ErrUnknownDriver             = fmt.Errorf("target driver is not registered with hotload")
 
 	mu         sync.RWMutex
 	sqlDrivers = make(map[string]driver.Driver)
@@ -136,7 +136,7 @@ func Strategies() []string {
 }
 
 func init() {
-	sql.Register("hotdriver", &hdriver{ctx: context.Background()})
+	sql.Register("hotload", &hdriver{ctx: context.Background()})
 }
 
 // hdriver is the hotload driver.
