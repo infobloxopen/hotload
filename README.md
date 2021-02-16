@@ -27,7 +27,7 @@ import (
 
 func init() {
     // this function call registers the lib/pq postgres driver with hotload
-    hotdriver.Register("postgres", pq.Driver{})
+    hotload.Register("postgres", pq.Driver{})
 }
 
 func main() {
