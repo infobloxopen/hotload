@@ -1,0 +1,9 @@
+get:
+	go get -t ./...
+
+vet: get
+	go vet ./...
+
+test: vet
+	go test ./...
+
