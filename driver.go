@@ -20,7 +20,7 @@
 //
 //     func init() {
 //         // this function call registers the lib/pq postgres driver with hotload
-//         hotload.Register("postgres", pq.Driver{})
+//         hotload.RegisterSQLDriver("postgres", pq.Driver{})
 //     }
 //
 //     func main() {
@@ -195,6 +195,10 @@ func (h *hdriver) Open(name string) (driver.Conn, error) {
 	}
 	mu.RLock()
 	defer mu.RUnlock()
+
+	if h.cgroup == nil {
+		h.cgroup = make(map[string]*chanGroup)
+	}
 
 	// look up in the chan group
 	cgroup, ok := h.cgroup[name]
