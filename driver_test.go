@@ -6,7 +6,6 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/infobloxopen/hotload"
 	"github.com/infobloxopen/hotload/fsnotify"
-	_ "github.com/infobloxopen/hotload/fsnotify"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"os"
