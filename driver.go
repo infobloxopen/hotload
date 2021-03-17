@@ -52,6 +52,7 @@ import (
 	"fmt"
 	"github.com/infobloxopen/hotload/fsnotify"
 	"net/url"
+	"runtime/debug"
 	"sort"
 	"sync"
 )
@@ -137,6 +138,7 @@ func Strategies() []string {
 }
 
 func init() {
+	debug.PrintStack()
 	sql.Register("hotload", &hdriver{ctx: context.Background()})
 	// Can't circular dependency and cause a double register for hotload brah
 	RegisterStrategy("fsnotify", fsnotify.NewStrategy())
