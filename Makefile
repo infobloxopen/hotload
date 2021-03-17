@@ -10,6 +10,9 @@ vet: fmt
 build: vet
 	go build ./...
 
-test: vet
-	go test -v ./...
+get-ginkgo:
+	go get github.com/onsi/ginkgo/ginkgo
+
+test: vet get-ginkgo
+	ginkgo
 
