@@ -51,6 +51,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"net/url"
+	"runtime/debug"
 	"sort"
 	"sync"
 )
@@ -136,6 +137,7 @@ func Strategies() []string {
 }
 
 func init() {
+	debug.PrintStack()
 	sql.Register("hotload", &hdriver{ctx: context.Background()})
 }
 
