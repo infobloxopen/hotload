@@ -7,7 +7,14 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/infobloxopen/hotload"
 )
+
+func init() {
+	hotload.RegisterStrategy("fsnotify", NewStrategy())
+}
+
 
 var resyncPeriod = time.Second * 2
 
