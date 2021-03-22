@@ -28,4 +28,4 @@ jobs:
 #      run: make build
     
     - name: Test
-      run: make docker-test
+      run: make test-docker
