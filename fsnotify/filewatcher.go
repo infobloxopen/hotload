@@ -15,7 +15,6 @@ func init() {
 	hotload.RegisterStrategy("fsnotify", NewStrategy())
 }
 
-
 var resyncPeriod = time.Second * 2
 
 // NewStrategy implements a hotload strategy that monitors config changes
