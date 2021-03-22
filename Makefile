@@ -16,3 +16,5 @@ get-ginkgo:
 test: vet get-ginkgo
 	ginkgo
 
+test-docker:
+	docker build -f Dockerfile.test .
