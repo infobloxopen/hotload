@@ -136,7 +136,7 @@ func Strategies() []string {
 }
 
 func init() {
-	sql.Register("hotload", &hdriver{ctx: context.Background()})
+	sql.Register("hotload", &hdriver{ctx: context.Background(), cgroup: make(map[string]*chanGroup)})
 }
 
 // hdriver is the hotload driver.
@@ -157,6 +157,7 @@ type chanGroup struct {
 	mu        sync.RWMutex
 }
 
+// monitor the location for changes
 func (cg *chanGroup) run() {
 	for {
 		select {
@@ -195,10 +196,6 @@ func (h *hdriver) Open(name string) (driver.Conn, error) {
 	}
 	mu.RLock()
 	defer mu.RUnlock()
-
-	if h.cgroup == nil {
-		h.cgroup = make(map[string]*chanGroup)
-	}
 
 	// look up in the chan group
 	cgroup, ok := h.cgroup[name]
