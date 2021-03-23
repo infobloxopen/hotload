@@ -1,9 +1,20 @@
 get:
 	go get -t ./...
 
-vet: get
+fmt: get
+	go fmt ./...
+
+vet: fmt
 	go vet ./...
 
-test: vet
-	go test ./...
+build: vet
+	go build ./...
 
+get-ginkgo:
+	go get github.com/onsi/ginkgo/ginkgo
+
+test: vet get-ginkgo
+	ginkgo
+
+test-docker:
+	docker build -f Dockerfile.test .
