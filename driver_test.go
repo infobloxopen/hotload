@@ -12,8 +12,8 @@ import (
 )
 
 func getDriverFromSqlMock() driver.Driver {
-	littleBuddy, mockyMoo, _ := sqlmock.NewWithDSN("user=pqgotest dbname=pqgotest sslmode=verify-full")
-	mockyPoo = mockyMoo
+	littleBuddy, mock, _ := sqlmock.NewWithDSN("user=pqgotest dbname=pqgotest sslmode=verify-full")
+	mockDriver = mock
 	return littleBuddy.Driver()
 }
 
@@ -22,7 +22,7 @@ func getRandomDriver() driver.Driver {
 	return db.Driver()
 }
 
-var mockyPoo sqlmock.Sqlmock
+var mockDriver sqlmock.Sqlmock
 var configFile string
 var configFileDir string
 
@@ -114,9 +114,9 @@ var _ = Describe("Driver", func() {
 		//	// Open dat
 		//	// Do a thing
 		//	// change connection file
-		//	mockyPoo.ExpectBegin()
-		//	mockyPoo.ExpectExec("SELECT 1")
-		//	mockyPoo.ExpectCommit()
+		//	mockDriver.ExpectBegin()
+		//	mockDriver.ExpectExec("SELECT 1")
+		//	mockDriver.ExpectCommit()
 		//	tx, err := db.Begin()
 		//	Expect(err).ToNot(HaveOccurred())
 		//	tx.Exec("SELECT 1")
@@ -124,7 +124,7 @@ var _ = Describe("Driver", func() {
 		//	Expect(err).ToNot(HaveOccurred())
 		//	go func () {
 		//		tx.Commit()
-		//		Expect(mockyPoo.ExpectationsWereMet()).ToNot(HaveOccurred())
+		//		Expect(mockDriver.ExpectationsWereMet()).ToNot(HaveOccurred())
 		//	}()
 		//})
 	})
