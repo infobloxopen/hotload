@@ -155,6 +155,7 @@ type chanGroup struct {
 	cancel    context.CancelFunc
 	sqlDriver driver.Driver
 	mu        sync.RWMutex
+	conns     []*managedConn
 }
 
 // monitor the location for changes
@@ -169,33 +170,50 @@ func (cg *chanGroup) run() {
 				// next update is the same, just ignore it
 				continue
 			}
-			cg.mu.Lock()
-			cg.cancel()
-			cg.ctx, cg.cancel = context.WithCancel(cg.parentCtx)
-			cg.value = v
-			cg.mu.Unlock()
+			cg.valueChanged(v)
 		}
 	}
 }
 
+func (cg *chanGroup) valueChanged(v string) {
+	cg.mu.Lock()
+	cg.cancel()
+	cg.ctx, cg.cancel = context.WithCancel(cg.parentCtx)
+	cg.markForReset()
+
+	cg.value = v
+	cg.mu.Unlock()
+}
+
+func (cg *chanGroup) markForReset() {
+	for _, c := range cg.conns {
+		c.reset = true
+	}
+
+	cg.conns = make([]*managedConn, 0)
+}
+
 func (cg *chanGroup) Open() (driver.Conn, error) {
-	cg.mu.RLock()
-	defer cg.mu.RUnlock()
+	cg.mu.Lock()
+	defer cg.mu.Unlock()
 	conn, err := cg.sqlDriver.Open(cg.value)
 	if err != nil {
 		return conn, err
 	}
-	return newManagedConn(cg.ctx, conn), nil
+
+	manConn := newManagedConn(cg.ctx, conn)
+	cg.conns = append(cg.conns, manConn)
+
+	return manConn, nil
 }
 
 func (h *hdriver) Open(name string) (driver.Conn, error) {
-
 	uri, err := url.Parse(name)
 	if err != nil {
 		return nil, err
 	}
-	mu.RLock()
-	defer mu.RUnlock()
+	mu.Lock()
+	defer mu.Unlock()
 
 	// look up in the chan group
 	cgroup, ok := h.cgroup[name]
@@ -222,6 +240,7 @@ func (h *hdriver) Open(name string) (driver.Conn, error) {
 			ctx:       ctx,
 			cancel:    cancel,
 			sqlDriver: sqlDriver,
+			conns:     make([]*managedConn, 0),
 		}
 		h.cgroup[name] = cgroup
 		go cgroup.run()
