@@ -8,11 +8,12 @@ import (
 // managedConn wraps a sql/driver.Conn so that it can be closed by
 // a supervising context.
 type managedConn struct {
-	ctx  context.Context
-	conn driver.Conn
+	ctx   context.Context
+	conn  driver.Conn
+	reset bool
 }
 
-func newManagedConn(ctx context.Context, conn driver.Conn) driver.Conn {
+func newManagedConn(ctx context.Context, conn driver.Conn) *managedConn {
 	return &managedConn{
 		ctx:  ctx,
 		conn: conn,
@@ -93,6 +94,14 @@ func (c *managedConn) IsValid() bool {
 		return true
 	}
 	return s.IsValid()
+}
+
+func (c *managedConn) ResetSession(ctx context.Context) error {
+	if c.reset {
+		return driver.ErrBadConn
+	}
+
+	return nil
 }
 
 func (c *managedConn) Close() error {

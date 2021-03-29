@@ -2,9 +2,11 @@ package fsnotify
 
 import (
 	"context"
+	rfsnotify "github.com/fsnotify/fsnotify"
 	"io/ioutil"
 	"log"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,25 +41,47 @@ type pathWatch struct {
 	value  string
 }
 
+func readConfigFile(path string) (v []byte, err error) {
+	v, err = ioutil.ReadFile(path)
+	if err != nil {
+		return
+	}
+	v = []byte(strings.TrimSuffix(string(v), "\n"))
+	return
+}
+
 func resync(w watcher, pth string) (string, error) {
 	w.Remove(pth)
-	bs, err := ioutil.ReadFile(pth)
+	bs, err := readConfigFile(pth)
 	if err != nil {
 		return "", err
 	}
 	return string(bs), w.Add(pth)
 }
 
+const maxBadConfigRetries = 5
+
 func (s *Strategy) run() {
 	failedPaths := make(map[string]struct{})
 	for {
 		select {
 		case e := <-s.watcher.GetEvents():
+			if e.Op != rfsnotify.Write {
+				continue
+			}
+
 			val, err := resync(s.watcher, e.Name)
-			if err != nil {
+			retries := 0
+			for len(val) == 0 && err == nil && retries < maxBadConfigRetries {
+				val, err = resync(s.watcher, e.Name)
+				retries++
+			}
+
+			if err != nil || retries >= maxBadConfigRetries {
 				failedPaths[e.Name] = struct{}{}
 				break
 			}
+
 			s.setVal(e.Name, val)
 		case e := <-s.watcher.GetErrors():
 			log.Printf("got error: %s", e)
@@ -105,7 +129,7 @@ func (s *Strategy) Watch(ctx context.Context, pth string, options url.Values) (v
 		if err := s.watcher.Add(pth); err != nil {
 			return "", nil, err
 		}
-		bs, err := ioutil.ReadFile(pth)
+		bs, err := readConfigFile(pth)
 		if err != nil {
 			s.watcher.Remove(pth)
 			return "", nil, err

@@ -12,7 +12,8 @@ import (
 )
 
 func getDriverFromSqlMock() driver.Driver {
-	littleBuddy, _, _ := sqlmock.NewWithDSN("user=pqgotest dbname=pqgotest sslmode=verify-full")
+	littleBuddy, mockyMoo, _ := sqlmock.NewWithDSN("user=pqgotest dbname=pqgotest sslmode=verify-full")
+	mockyPoo = mockyMoo
 	return littleBuddy.Driver()
 }
 
@@ -21,7 +22,9 @@ func getRandomDriver() driver.Driver {
 	return db.Driver()
 }
 
+var mockyPoo sqlmock.Sqlmock
 var configFile string
+var configFileDir string
 
 var _ = Describe("Driver", func() {
 	BeforeSuite(func() {
@@ -36,6 +39,7 @@ var _ = Describe("Driver", func() {
 		var err error
 		configFile, err = os.Getwd()
 		Expect(err).ToNot(HaveOccurred())
+		configFileDir = configFile + "/testdata/"
 		configFile += "/testdata/myconfig.txt"
 	})
 
@@ -101,5 +105,27 @@ var _ = Describe("Driver", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("missing protocol scheme"))
 		})
+
+		//It("Should close my connection when the connection information changes", func() {
+		//	db, err := sql.Open("hotload", "fsnotify://sqlmock"+configFileDir+"urconfig.txt")
+		//	Expect(err).ToNot(HaveOccurred())
+		//
+		//	Expect(db.Ping()).ToNot(HaveOccurred())
+		//	// Open dat
+		//	// Do a thing
+		//	// change connection file
+		//	mockyPoo.ExpectBegin()
+		//	mockyPoo.ExpectExec("SELECT 1")
+		//	mockyPoo.ExpectCommit()
+		//	tx, err := db.Begin()
+		//	Expect(err).ToNot(HaveOccurred())
+		//	tx.Exec("SELECT 1")
+		//	err = ioutil.WriteFile(configFileDir+"urconfig.txt", []byte("user=pqgotest dbname=pqgotestorooni sslmode=verify-full"), 0644)
+		//	Expect(err).ToNot(HaveOccurred())
+		//	go func () {
+		//		tx.Commit()
+		//		Expect(mockyPoo.ExpectationsWereMet()).ToNot(HaveOccurred())
+		//	}()
+		//})
 	})
 })
