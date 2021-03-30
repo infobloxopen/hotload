@@ -66,18 +66,12 @@ func (s *Strategy) run() {
 	for {
 		select {
 		case e := <-s.watcher.GetEvents():
-			if e.Op != rfsnotify.Write {
+			if e.Op != rfsnotify.Write && e.Op != rfsnotify.Remove {
 				continue
 			}
 
 			val, err := resync(s.watcher, e.Name)
-			retries := 0
-			for len(val) == 0 && err == nil && retries < maxBadConfigRetries {
-				val, err = resync(s.watcher, e.Name)
-				retries++
-			}
-
-			if err != nil || retries >= maxBadConfigRetries {
+			if err != nil {
 				failedPaths[e.Name] = struct{}{}
 				break
 			}

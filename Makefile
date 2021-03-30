@@ -18,7 +18,7 @@ get-ginkgo:
 	go get github.com/onsi/ginkgo/ginkgo
 
 test: vet get-ginkgo
-	ginkgo
+	go test ./...
 
 # test target which includes the no-diff fail condition
 ci-test: fmt no-diff test
