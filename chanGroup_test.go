@@ -36,7 +36,8 @@ var _ = Describe("Driver", func() {
 			newVal := "new DSN"
 			go cg.run()
 			values <- newVal
-
+			cg.mu.RLock()
+			defer cg.mu.RUnlock()
 			Expect(cg.value).To(Equal(newVal))
 		})
 
