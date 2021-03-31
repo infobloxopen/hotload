@@ -101,7 +101,12 @@ func (c *managedConn) ResetSession(ctx context.Context) error {
 		return driver.ErrBadConn
 	}
 
-	return nil
+	s, ok := c.conn.(driver.SessionResetter)
+	if !ok {
+		return nil
+	}
+
+	return s.ResetSession(ctx)
 }
 
 func (c *managedConn) Close() error {
