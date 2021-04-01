@@ -2,10 +2,31 @@ package hotload
 
 import (
 	"context"
+	"database/sql/driver"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"sync"
 )
+
+type testConn struct {
+	closed bool
+}
+
+func (tc *testConn) Open(name string) (driver.Conn, error) {
+	return tc, nil
+}
+
+func (tc *testConn) Prepare(query string) (driver.Stmt, error) {
+	return nil, nil
+}
+func (tc *testConn) Begin() (driver.Tx, error) {
+	return nil, nil
+}
+
+func (tc *testConn) Close() error {
+	tc.closed = true
+	return nil
+}
 
 var _ = Describe("Driver", func() {
 	var pctx context.Context
@@ -58,10 +79,29 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("Should mark all connections for reset", func() {
-			cg.markForReset()
+			cg.resetConnections()
 
 			for _, c := range conns {
 				Expect(c.reset).To(BeTrue())
+			}
+		})
+
+		It("Should kill all connections when specified", func() {
+			cg.forceKill = true
+			testConns := make([]*testConn, 0)
+			for _, c := range cg.conns {
+				tc := &testConn{}
+				c.conn = tc
+				testConns = append(testConns, tc)
+			}
+			cg.resetConnections()
+
+			for _, c := range conns {
+				Expect(c.killed).To(BeTrue(), "connection should be marked killed")
+			}
+
+			for _, tc := range testConns {
+				Expect(tc.closed).To(BeTrue(), "Closed() should have been called on the underlying connection")
 			}
 		})
 	})

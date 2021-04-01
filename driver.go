@@ -63,6 +63,8 @@ type Strategy interface {
 	Watch(ctx context.Context, pth string, options url.Values) (value string, values <-chan string, err error)
 }
 
+const forceKill = "forceKill"
+
 var (
 	ErrUnsupportedStrategy       = fmt.Errorf("unsupported hotload strategy")
 	ErrMalformedConnectionString = fmt.Errorf("malformed hotload connection string")
@@ -155,6 +157,7 @@ type chanGroup struct {
 	cancel    context.CancelFunc
 	sqlDriver driver.Driver
 	mu        sync.RWMutex
+	forceKill bool
 	conns     []*managedConn
 }
 
@@ -180,15 +183,20 @@ func (cg *chanGroup) valueChanged(v string) {
 	defer cg.mu.Unlock()
 	cg.cancel()
 	cg.ctx, cg.cancel = context.WithCancel(cg.parentCtx)
-	cg.markForReset()
+	cg.resetConnections()
 
 	cg.value = v
 
 }
 
-func (cg *chanGroup) markForReset() {
+func (cg *chanGroup) resetConnections() {
 	for _, c := range cg.conns {
 		c.Reset(true)
+
+		if cg.forceKill {
+			// ignore errors from close
+			c.Close()
+		}
 	}
 
 	cg.conns = make([]*managedConn, 0)
@@ -206,6 +214,16 @@ func (cg *chanGroup) Open() (driver.Conn, error) {
 	cg.conns = append(cg.conns, manConn)
 
 	return manConn, nil
+}
+
+func (cg *chanGroup) parseValues(vs url.Values) {
+	cg.mu.Lock()
+	defer cg.mu.Unlock()
+
+	if v, ok := vs[forceKill]; ok {
+		firstValue := v[0]
+		cg.forceKill = firstValue == "true"
+	}
 }
 
 func (h *hdriver) Open(name string) (driver.Conn, error) {
@@ -228,8 +246,8 @@ func (h *hdriver) Open(name string) (driver.Conn, error) {
 		if !ok {
 			return nil, ErrUnknownDriver
 		}
-
-		value, values, err := strategy.Watch(h.ctx, uri.Path, uri.Query())
+		queryParams := uri.Query()
+		value, values, err := strategy.Watch(h.ctx, uri.Path, queryParams)
 		if err != nil {
 			return nil, err
 		}
@@ -243,6 +261,7 @@ func (h *hdriver) Open(name string) (driver.Conn, error) {
 			sqlDriver: sqlDriver,
 			conns:     make([]*managedConn, 0),
 		}
+		cgroup.parseValues(queryParams)
 		h.cgroup[name] = cgroup
 		go cgroup.run()
 	}
