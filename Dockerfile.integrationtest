@@ -1,0 +1,7 @@
+FROM golang:1.15
+WORKDIR /go/src/github.com/infobloxopen/hotload/
+COPY . .
+
+# build integration test binary
+RUN make build-test
+
