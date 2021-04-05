@@ -85,3 +85,8 @@ application holds connections open with long running operations, this will preve
 Adding `forceKill=true` to your DSN will cause the hotload driver to close the underlying connection manually when a 
 change to the connection information is detected.
 
+
+For example:
+```
+db, err := sql.Open("hotload", "fsnotify://postgres/tmp/myconfig.txt?forceKill=true")
+```
