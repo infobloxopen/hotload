@@ -1,3 +1,4 @@
+
 [![Go Reference](https://pkg.go.dev/badge/github.com/infobloxopen/hotload.svg)](https://pkg.go.dev/github.com/infobloxopen/hotload)
 # hotload
 Hotload is a golang database/sql that supports dynamic reloading
@@ -75,3 +76,17 @@ Pth represents a unique string that makes sense to the strategy. For example, pt
 point to a path in etcd or a kind/id in k8s.
 
 The hotload project ships with one hotload strategy: fsnotify.
+
+# Force Kill
+
+By default, the hotload driver allows for connections to be closed gracefully by the underlying driver. If your 
+application holds connections open with long running operations, this will prevent graceful switchover to new datasources.
+
+Adding `forceKill=true` to your DSN will cause the hotload driver to close the underlying connection manually when a 
+change to the connection information is detected.
+
+
+For example:
+```
+db, err := sql.Open("hotload", "fsnotify://postgres/tmp/myconfig.txt?forceKill=true")
+```

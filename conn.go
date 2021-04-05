@@ -9,10 +9,11 @@ import (
 // managedConn wraps a sql/driver.Conn so that it can be closed by
 // a supervising context.
 type managedConn struct {
-	ctx   context.Context
-	conn  driver.Conn
-	reset bool
-	mu    sync.RWMutex
+	ctx    context.Context
+	conn   driver.Conn
+	reset  bool
+	killed bool
+	mu     sync.RWMutex
 }
 
 func newManagedConn(ctx context.Context, conn driver.Conn) *managedConn {
@@ -112,7 +113,15 @@ func (c *managedConn) ResetSession(ctx context.Context) error {
 }
 
 func (c *managedConn) Close() error {
-	return c.conn.Close()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	err := c.conn.Close()
+
+	if err == nil {
+		c.killed = true
+	}
+
+	return err
 }
 
 func (c *managedConn) GetReset() bool {
@@ -125,4 +134,10 @@ func (c *managedConn) Reset(v bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.reset = v
+}
+
+func (c *managedConn) GetKill() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.killed
 }
