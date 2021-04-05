@@ -177,17 +177,18 @@ func (cg *chanGroup) run() {
 
 func (cg *chanGroup) valueChanged(v string) {
 	cg.mu.Lock()
+	defer cg.mu.Unlock()
 	cg.cancel()
 	cg.ctx, cg.cancel = context.WithCancel(cg.parentCtx)
 	cg.markForReset()
 
 	cg.value = v
-	cg.mu.Unlock()
+
 }
 
 func (cg *chanGroup) markForReset() {
 	for _, c := range cg.conns {
-		c.reset = true
+		c.Reset(true)
 	}
 
 	cg.conns = make([]*managedConn, 0)

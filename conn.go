@@ -3,6 +3,7 @@ package hotload
 import (
 	"context"
 	"database/sql/driver"
+	"sync"
 )
 
 // managedConn wraps a sql/driver.Conn so that it can be closed by
@@ -11,6 +12,7 @@ type managedConn struct {
 	ctx   context.Context
 	conn  driver.Conn
 	reset bool
+	mu    sync.RWMutex
 }
 
 func newManagedConn(ctx context.Context, conn driver.Conn) *managedConn {
@@ -97,7 +99,7 @@ func (c *managedConn) IsValid() bool {
 }
 
 func (c *managedConn) ResetSession(ctx context.Context) error {
-	if c.reset {
+	if c.GetReset() {
 		return driver.ErrBadConn
 	}
 
@@ -111,4 +113,16 @@ func (c *managedConn) ResetSession(ctx context.Context) error {
 
 func (c *managedConn) Close() error {
 	return c.conn.Close()
+}
+
+func (c *managedConn) GetReset() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.reset
+}
+
+func (c *managedConn) Reset(v bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reset = v
 }
