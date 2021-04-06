@@ -15,10 +15,10 @@ import (
 )
 
 const (
-	configPath = "/var/config.txt"
-	hotloadTestDsn = "postgresql://admin:test@hotload-integration-tests-postgresql.default.svc.cluster.local:5432/hotload_test?sslmode=disable"
+	configPath      = "/var/config.txt"
+	hotloadTestDsn  = "postgresql://admin:test@hotload-integration-tests-postgresql.default.svc.cluster.local:5432/hotload_test?sslmode=disable"
 	hotloadTest1Dsn = "postgresql://admin:test@hotload-integration-tests-postgresql.default.svc.cluster.local:5432/hotload_test1?sslmode=disable"
-	testSqlSetup = "CREATE TABLE test (c1 int)"
+	testSqlSetup    = "CREATE TABLE test (c1 int)"
 )
 
 func init() {
@@ -28,14 +28,16 @@ func init() {
 
 func setDSN(dsn string, path string) {
 	err := ioutil.WriteFile(path, []byte(dsn), 777)
-	if err != nil { Fail("error writing dsn file") }
+	if err != nil {
+		Fail("error writing dsn file")
+	}
 	// Yield thread to let switch over take place
 	time.Sleep(250 * time.Millisecond)
 }
 
 // Open a db or die
 func openDb(dsn string) *sql.DB {
-	db, err := sql.Open("postgres",  dsn)
+	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		Fail(fmt.Sprintf("error opening db: %v", err))
 	}
@@ -43,7 +45,7 @@ func openDb(dsn string) *sql.DB {
 	return db
 }
 
-func expectValueInDb(db *sql.DB, expected int64)  {
+func expectValueInDb(db *sql.DB, expected int64) {
 	r, err := db.Query("SELECT c1 FROM test")
 	var c1 int64
 	Expect(err).ToNot(HaveOccurred(), fmt.Sprintf("error reading from table test: %v", err))
@@ -80,8 +82,8 @@ var _ = Describe("hotload integration tests", func() {
 	}, 240)
 
 	var (
-		db *sql.DB
-		hltDb *sql.DB
+		db     *sql.DB
+		hltDb  *sql.DB
 		hlt1Db *sql.DB
 	)
 
@@ -89,7 +91,7 @@ var _ = Describe("hotload integration tests", func() {
 		setDSN(hotloadTestDsn, configPath)
 		hltDb = openDb(hotloadTestDsn)
 		hlt1Db = openDb(hotloadTest1Dsn)
-		newDb, err := sql.Open("hotload",  "fsnotify://postgres" + configPath)
+		newDb, err := sql.Open("hotload", "fsnotify://postgres"+configPath)
 		if err != nil {
 			Fail(fmt.Sprintf("error opening db: %v", err))
 		}
