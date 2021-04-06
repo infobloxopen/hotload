@@ -14,11 +14,11 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
-postgreql:
+postgresql:
   livenessProbe:
-    initialDelaySeconds: 60 
+    initialDelaySeconds: 10
   readinessProbe:
-    initialDelaySeconds: 60 
+    initialDelaySeconds: 10
   postgresqlPassword: test
   postgresqlDatabase: hldatabase
   postgresqlUsername: admin
@@ -28,4 +28,4 @@ postgreql:
   initdbScripts:
     init.sql: |
       CREATE DATABASE hotload_test;
-      CREATE DATABASE hotload_test2;
+      CREATE DATABASE hotload_test1;

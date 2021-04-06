@@ -9,5 +9,5 @@ import (
 
 func TestIntegrationtests(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Integrationtests Suite")
+	RunSpecs(t, "Integration Tests")
 }
