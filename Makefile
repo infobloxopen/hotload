@@ -1,6 +1,5 @@
 GIT_COMMIT ?= $(shell git describe --dirty=-unsupported --always --tags || echo pre-commit)
 IMAGE_NAME ?= hotload-integration-tests:$(GIT_COMMIT)
-KIND_CLUSTER_NAME = hotload-test
 
 get:
 	go get -t ./...
@@ -43,10 +42,10 @@ build-test: vet get-ginkgo
 	go test -c ./integrationtests
 
 kind-create-cluster:
-	kind create cluster --name $(KIND_CLUSTER_NAME)
+	kind create cluster
 
 kind-load:
-	kind load docker-image --name $(KIND_CLUSTER_NAME) $(IMAGE_NAME)
+	kind load docker-image $(IMAGE_NAME)
 
 ci-integration-tests: integ-test-image kind-load deploy-integration-tests
 	(helm test --timeout=1200s hotload-integration-tests || (kubectl logs hotload-integration-tests-job && exit 1)) && kubectl logs hotload-integration-tests-job
