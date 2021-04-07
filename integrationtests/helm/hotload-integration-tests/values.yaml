@@ -1,0 +1,31 @@
+# Default values for hotload-integration-tests.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+name: hotload-integration-tests
+
+image:
+  repository: hotload-integration-tests
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+postgresql:
+  livenessProbe:
+    initialDelaySeconds: 10
+  readinessProbe:
+    initialDelaySeconds: 10
+  postgresqlPassword: test
+  postgresqlDatabase: hldatabase
+  postgresqlUsername: admin
+  postgresqlPostgresPassword: test
+  persistence:
+    enabled: false
+  initdbScripts:
+    init.sql: |
+      CREATE DATABASE hotload_test;
+      CREATE DATABASE hotload_test1;

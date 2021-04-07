@@ -1,0 +1,10 @@
+FROM golang:1.15 as builder
+WORKDIR /go/src/github.com/infobloxopen/hotload/
+COPY . .
+
+# build integration test binary
+RUN make build-test
+
+FROM ubuntu:20.04 AS runner
+COPY --from=builder /go/src/github.com/infobloxopen/hotload/integrationtests.test .
+
