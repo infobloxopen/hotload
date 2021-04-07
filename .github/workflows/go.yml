@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - name: Test
+    - name: Unit Tests
       run: make test-docker
     - uses: engineerd/setup-kind@v0.5.0
       with:

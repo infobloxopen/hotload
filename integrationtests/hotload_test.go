@@ -109,7 +109,6 @@ var _ = Describe("hotload integration tests", func() {
 			r, err := db.Exec(fmt.Sprintf("INSERT INTO test (c1) VALUES (%d)", i))
 			if err != nil {
 				Fail(fmt.Sprintf("error inserting row: %v", err))
-				Fail(fmt.Sprintf("error inserting row: %v", err))
 			}
 			log.Print(r)
 
