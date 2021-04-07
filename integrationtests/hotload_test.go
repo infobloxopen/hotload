@@ -105,7 +105,6 @@ var _ = Describe("hotload integration tests", func() {
 	})
 
 	It("should connect to new db when file changes", func() {
-
 		for i := 0; i < 2; i++ {
 			r, err := db.Exec(fmt.Sprintf("INSERT INTO test (c1) VALUES (%d)", i))
 			if err != nil {
