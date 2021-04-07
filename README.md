@@ -2,7 +2,7 @@
 # hotload
 Hotload is a golang database/sql that supports dynamic reloading
 of database configuration. In the typical use of sql.Open(), users must
-close the returned DB object and recreate it in order to change the
+close the returned DB object and recreate it to change the
 connection string. Hotload works by registering a driver that proxies
 the driver interface to the real database driver. When config changes
 are detected it closes connections in a manner that causes the database/sql
@@ -53,7 +53,7 @@ of a lib/pq Postgres connection string that would have been stored at /tmp/mycon
 user=pqgotest dbname=pqgotest sslmode=verify-full
 ```
 
-# strategies
+# Strategies
 
 Hotload has an interface for adding reload strategies. The interface looks like this:
 ```go
@@ -75,3 +75,16 @@ Pth represents a unique string that makes sense to the strategy. For example, pt
 point to a path in etcd or a kind/id in k8s.
 
 The hotload project ships with one hotload strategy: fsnotify.
+
+# Force Kill
+
+By default, the hotload driver gracefully closes connections to the underlying driver. If your application holds connections open with long-running operations, this will prevent graceful switchover to new data sources.
+
+Adding `forceKill=true` to your DSN will cause the hotload driver to close the underlying connection manually when a 
+change to the connection information is detected.
+
+
+For example:
+```
+db, err := sql.Open("hotload", "fsnotify://postgres/tmp/myconfig.txt?forceKill=true")
+```

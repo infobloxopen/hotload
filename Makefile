@@ -23,6 +23,7 @@ get-ginkgo:
 test: vet get-ginkgo
 	go test -race github.com/infobloxopen/hotload github.com/infobloxopen/hotload/fsnotify
 
+
 # test target which includes the no-diff fail condition
 ci-test: fmt no-diff test
 
