@@ -46,20 +46,21 @@ func readConfigFile(path string) (v []byte, err error) {
 	if err != nil {
 		return
 	}
-	v = []byte(strings.TrimSuffix(string(v), "\n"))
+	v = []byte(strings.TrimSpace(string(v)))
 	return
 }
 
 func resync(w watcher, pth string) (string, error) {
-	w.Remove(pth)
+	err := w.Remove(pth)
+	if err != nil {
+		return "", err
+	}
 	bs, err := readConfigFile(pth)
 	if err != nil {
 		return "", err
 	}
 	return string(bs), w.Add(pth)
 }
-
-const maxBadConfigRetries = 5
 
 func (s *Strategy) run() {
 	failedPaths := make(map[string]struct{})
