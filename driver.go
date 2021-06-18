@@ -50,6 +50,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"github.com/sirupsen/logrus"
 	"net/url"
 	"sort"
 	"sync"
@@ -73,6 +74,8 @@ var (
 	mu         sync.RWMutex
 	sqlDrivers = make(map[string]driver.Driver)
 	strategies = make(map[string]Strategy)
+
+	logger *logrus.Logger
 )
 
 // RegisterSQLDriver makes a database driver available by the provided name.
@@ -137,8 +140,14 @@ func Strategies() []string {
 	return list
 }
 
+// SetLogLevel specifies the logrus.Level for the hotload driver's logger
+func SetLogLevel(level logrus.Level) {
+	logger.SetLevel(level)
+}
+
 func init() {
 	sql.Register("hotload", &hdriver{ctx: context.Background(), cgroup: make(map[string]*chanGroup)})
+	logger = logrus.New()
 }
 
 // hdriver is the hotload driver.
@@ -167,6 +176,7 @@ func (cg *chanGroup) run() {
 		select {
 		case <-cg.parentCtx.Done():
 			cg.cancel()
+			logger.Debug("cancelling chanGroup context")
 			return
 		case v := <-cg.values:
 			if v == cg.value {
@@ -174,6 +184,7 @@ func (cg *chanGroup) run() {
 				continue
 			}
 			cg.valueChanged(v)
+			logger.Debug("connection information changed")
 		}
 	}
 }
@@ -186,7 +197,6 @@ func (cg *chanGroup) valueChanged(v string) {
 	cg.resetConnections()
 
 	cg.value = v
-
 }
 
 func (cg *chanGroup) resetConnections() {
@@ -219,10 +229,11 @@ func (cg *chanGroup) Open() (driver.Conn, error) {
 func (cg *chanGroup) parseValues(vs url.Values) {
 	cg.mu.Lock()
 	defer cg.mu.Unlock()
-
+	logger.WithFields(logrus.Fields{"urlValues": vs}).Debug("parsing values")
 	if v, ok := vs[forceKill]; ok {
 		firstValue := v[0]
 		cg.forceKill = firstValue == "true"
+		logger.Debug("forceKill set to true")
 	}
 }
 
