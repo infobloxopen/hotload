@@ -51,10 +51,7 @@ func readConfigFile(path string) (v []byte, err error) {
 }
 
 func resync(w watcher, pth string) (string, error) {
-	err := w.Remove(pth)
-	if err != nil {
-		return "", err
-	}
+	w.Remove(pth)
 	bs, err := readConfigFile(pth)
 	if err != nil {
 		return "", err
