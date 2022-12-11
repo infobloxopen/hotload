@@ -78,6 +78,11 @@ func (tw *testWatcher) GetErrors() <-chan error {
 }
 
 var _ = Describe("FileWatcher", func() {
+	const (
+		paramsURL    = "postgres://login:password@host:1234/database?sslmode=disable"
+		paramsParsed = "host=a login=b password=c"
+	)
+
 	s := NewStrategy()
 	DescribeTable("Watch",
 		func(tt test) {
@@ -105,6 +110,42 @@ var _ = Describe("FileWatcher", func() {
 				pth: "somefile does not exist",
 			},
 			wantErr: true,
+		}),
+		Entry("URL surrounded with whitespaces --> URL trimmed", test{
+			setup: func(args *args) {
+				f, _ := ioutil.TempFile("", "unittest_")
+				f.Write([]byte("\r\n \t " + paramsURL + " \t \r\n"))
+				args.pth = f.Name()
+				f.Close()
+			},
+			wantErr: false,
+			post: func(args *args, value string, values <-chan string) error {
+				if value != paramsURL {
+					return fmt.Errorf("expected '"+paramsURL+"' got %v", value)
+				}
+				return nil
+			},
+			tearDown: func(args *args) {
+				os.Remove(args.pth)
+			},
+		}),
+		Entry("params surrounded with whitespaces --> params trimmed", test{
+			setup: func(args *args) {
+				f, _ := ioutil.TempFile("", "unittest_")
+				f.Write([]byte("\r\n \t " + paramsParsed + " \t \r\n"))
+				args.pth = f.Name()
+				f.Close()
+			},
+			wantErr: false,
+			post: func(args *args, value string, values <-chan string) error {
+				if value != paramsParsed {
+					return fmt.Errorf("expected '"+paramsParsed+"' got %v", value)
+				}
+				return nil
+			},
+			tearDown: func(args *args) {
+				os.Remove(args.pth)
+			},
 		}),
 		Entry("a, update b", test{
 			setup: func(args *args) {
