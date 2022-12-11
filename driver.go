@@ -2,34 +2,34 @@
 // database drivers. To use it, import it like any other database driver and register
 // the real database driver you want to use with hotload.
 //
-//     import (
-//         // import the std lib sql package
-//         "database/sql"
+//	import (
+//	    // import the std lib sql package
+//	    "database/sql"
 //
-//        log "github.com/sirupsen/logrus"
+//	   log "github.com/sirupsen/logrus"
 //
-//        // this import registers hotload with the sql package
-//        "github.com/infobloxopen/hotload"
+//	   // this import registers hotload with the sql package
+//	   "github.com/infobloxopen/hotload"
 //
-//        // this import registers the fsnotify hotload strategy
-//        _ "github.com/infobloxopen/hotload/fsnotify"
+//	   // this import registers the fsnotify hotload strategy
+//	   _ "github.com/infobloxopen/hotload/fsnotify"
 //
-//        // this import registers the postgres driver with the sql package
-//        "github.com/lib/pq"
-//     )
+//	   // this import registers the postgres driver with the sql package
+//	   "github.com/lib/pq"
+//	)
 //
-//     func init() {
-//         // this function call registers the lib/pq postgres driver with hotload
-//         hotload.RegisterSQLDriver("postgres", pq.Driver{})
-//     }
+//	func init() {
+//	    // this function call registers the lib/pq postgres driver with hotload
+//	    hotload.RegisterSQLDriver("postgres", pq.Driver{})
+//	}
 //
-//     func main() {
-//         db, err := sql.Open("hotload", "fsnotify://postgres/tmp/myconfig.txt")
-//         if err != nil {
-//             log.Fatalf("could not open db connection: %s", err)
-//         }
-//         db.Query("select 1")
-//     }
+//	func main() {
+//	    db, err := sql.Open("hotload", "fsnotify://postgres/tmp/myconfig.txt")
+//	    if err != nil {
+//	        log.Fatalf("could not open db connection: %s", err)
+//	    }
+//	    db.Query("select 1")
+//	}
 //
 // The above code:
 // * registers the hotload driver with database/sql
@@ -42,7 +42,8 @@
 // hostname in the URL specifies the real database driver. Finally the path and query parameters
 // are left for the hotload strategy plugin to configure themselves. Below is an example
 // of a lib/pq postgres connection string that would have been stored at /tmp/myconfig.txt
-//     user=pqgotest dbname=pqgotest sslmode=verify-full
+//
+//	user=pqgotest dbname=pqgotest sslmode=verify-full
 package hotload
 
 import (
@@ -50,10 +51,11 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
-	"github.com/sirupsen/logrus"
 	"net/url"
 	"sort"
 	"sync"
+
+	"github.com/sirupsen/logrus"
 )
 
 // Strategy is the plugin interface for hotload.
@@ -71,46 +73,24 @@ var (
 	ErrMalformedConnectionString = fmt.Errorf("malformed hotload connection string")
 	ErrUnknownDriver             = fmt.Errorf("target driver is not registered with hotload")
 
-	mu         sync.RWMutex
-	sqlDrivers = make(map[string]driver.Driver)
-	strategies = make(map[string]Strategy)
-
-	logger *logrus.Logger
+	mu          sync.RWMutex
+	sqlRegistry = NewRegistry[driver.Driver, driver.Conn]("hotload")
+	strategies  = make(map[string]Strategy)
+	logger      *logrus.Logger
 )
 
 // RegisterSQLDriver makes a database driver available by the provided name.
 // If RegisterSQLDriver is called twice with the same name or if driver is nil,
 // it panics.
-func RegisterSQLDriver(name string, driver driver.Driver) {
-	mu.Lock()
-	defer mu.Unlock()
-	if driver == nil {
-		panic("hotload: Register driver is nil")
+func RegisterSQLDriver(name string, d driver.Driver) {
+	if err := sqlRegistry.Register(name, d); err != nil {
+		panic(err.Error())
 	}
-	if _, dup := sqlDrivers[name]; dup {
-		panic("hotload: Register called twice for driver " + name)
-	}
-	sqlDrivers[name] = driver
-}
-
-func unregisterAll() {
-	mu.Lock()
-	defer mu.Unlock()
-	// For tests.
-	sqlDrivers = make(map[string]driver.Driver)
-	strategies = make(map[string]Strategy)
 }
 
 // SQLDrivers returns a sorted list of the names of the registered drivers.
 func SQLDrivers() []string {
-	mu.RLock()
-	defer mu.RUnlock()
-	list := make([]string, 0, len(sqlDrivers))
-	for name := range sqlDrivers {
-		list = append(list, name)
-	}
-	sort.Strings(list)
-	return list
+	return sqlRegistry.Drivers()
 }
 
 // RegisterStrategy makes a database driver available by the provided name.
@@ -140,7 +120,7 @@ func Strategies() []string {
 	return list
 }
 
-// SetLogLevel specifies the logrus.Level for the hotload driver's logger
+// SetLogLevel specifies the logrus.Level for the hotload driver's logger.
 func SetLogLevel(level logrus.Level) {
 	logger.SetLevel(level)
 }
@@ -242,10 +222,10 @@ func (h *hdriver) Open(name string) (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	mu.Lock()
-	defer mu.Unlock()
 
 	// look up in the chan group
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	cgroup, ok := h.cgroup[name]
 	if !ok {
 		strategy, ok := strategies[uri.Scheme]
@@ -253,7 +233,7 @@ func (h *hdriver) Open(name string) (driver.Conn, error) {
 			return nil, ErrUnsupportedStrategy
 		}
 
-		sqlDriver, ok := sqlDrivers[uri.Host]
+		sqlDriver, ok := sqlRegistry.GetDriver(uri.Host)
 		if !ok {
 			return nil, ErrUnknownDriver
 		}

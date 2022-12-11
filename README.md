@@ -1,12 +1,23 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/infobloxopen/hotload.svg)](https://pkg.go.dev/github.com/infobloxopen/hotload)
 # hotload
-Hotload is a golang database/sql that supports dynamic reloading
-of database configuration. In the typical use of sql.Open(), users must
+Hotload is a driver utility that supports dynamic reloading
+of configuration. One of the most common types of driver is
+the database/sql driver in the go standard library.
+In the typical use of sql.Open(), users must
 close the returned DB object and recreate it to change the
 connection string. Hotload works by registering a driver that proxies
-the driver interface to the real database driver. When config changes
-are detected it closes connections in a manner that causes the database/sql
+the driver interface to the real driver. When config changes
+are detected, it closes connections in a manner that causes the database/sql
 package to create new connections with the new connection parameters.
+
+Hotload supports any driver that implements the Driver interface
+```go
+type Driver[DriverType any, ConnType any] interface {
+	Open(name string) (ConnType, error)
+}
+```
+Since the interface is a generic, different concrete types can be implemented
+without having modify hotload.
 
 ```go
 import (
@@ -88,3 +99,17 @@ For example:
 ```
 db, err := sql.Open("hotload", "fsnotify://postgres/tmp/myconfig.txt?forceKill=true")
 ```
+
+# Generic Drivers
+
+The concrete type of driver is handled using generics. In this packaged, we register
+a database/sql/driver driver.
+```go
+import "database/sql/driver"
+import "github.com/infobloxopen/hotload"
+
+var sqlRegistry = hotload.NewRegistry[driver.Driver, driver.Conn]("hotload")
+```
+
+From this point forward, sqlRegistery will only allow sql drivers to be registered
+with its Register method.

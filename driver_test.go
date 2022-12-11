@@ -3,12 +3,13 @@ package hotload_test
 import (
 	"database/sql"
 	"database/sql/driver"
+	"os"
+
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/infobloxopen/hotload"
 	"github.com/infobloxopen/hotload/fsnotify"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	"os"
 )
 
 func getDriverFromSqlMock() driver.Driver {

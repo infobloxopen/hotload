@@ -3,6 +3,7 @@ package hotload
 import (
 	"context"
 	"database/sql/driver"
+	"fmt"
 	"sync"
 )
 
@@ -70,7 +71,11 @@ func (c *managedConn) Prepare(query string) (driver.Stmt, error) {
 		return nil, driver.ErrBadConn
 	default:
 	}
-	return c.conn.Prepare(query)
+	pConn, ok := c.conn.(driver.Conn)
+	if !ok {
+		return nil, fmt.Errorf("connection doesn't support Prepare()")
+	}
+	return pConn.Prepare(query)
 }
 
 // Begin calls the underlying Begin method unless the supervising
@@ -82,7 +87,11 @@ func (c *managedConn) Begin() (driver.Tx, error) {
 		return nil, driver.ErrBadConn
 	default:
 	}
-	return c.conn.Begin()
+	bConn, ok := c.conn.(driver.Conn)
+	if !ok {
+		return nil, fmt.Errorf("connection doesn't support Begin()")
+	}
+	return bConn.Begin()
 }
 
 func (c *managedConn) IsValid() bool {
