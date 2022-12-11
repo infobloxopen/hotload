@@ -2,34 +2,34 @@
 // database drivers. To use it, import it like any other database driver and register
 // the real database driver you want to use with hotload.
 //
-//     import (
-//         // import the std lib sql package
-//         "database/sql"
+//	import (
+//	    // import the std lib sql package
+//	    "database/sql"
 //
-//        log "github.com/sirupsen/logrus"
+//	   log "github.com/sirupsen/logrus"
 //
-//        // this import registers hotload with the sql package
-//        "github.com/infobloxopen/hotload"
+//	   // this import registers hotload with the sql package
+//	   "github.com/infobloxopen/hotload"
 //
-//        // this import registers the fsnotify hotload strategy
-//        _ "github.com/infobloxopen/hotload/fsnotify"
+//	   // this import registers the fsnotify hotload strategy
+//	   _ "github.com/infobloxopen/hotload/fsnotify"
 //
-//        // this import registers the postgres driver with the sql package
-//        "github.com/lib/pq"
-//     )
+//	   // this import registers the postgres driver with the sql package
+//	   "github.com/lib/pq"
+//	)
 //
-//     func init() {
-//         // this function call registers the lib/pq postgres driver with hotload
-//         hotload.RegisterSQLDriver("postgres", pq.Driver{})
-//     }
+//	func init() {
+//	    // this function call registers the lib/pq postgres driver with hotload
+//	    hotload.RegisterSQLDriver("postgres", pq.Driver{})
+//	}
 //
-//     func main() {
-//         db, err := sql.Open("hotload", "fsnotify://postgres/tmp/myconfig.txt")
-//         if err != nil {
-//             log.Fatalf("could not open db connection: %s", err)
-//         }
-//         db.Query("select 1")
-//     }
+//	func main() {
+//	    db, err := sql.Open("hotload", "fsnotify://postgres/tmp/myconfig.txt")
+//	    if err != nil {
+//	        log.Fatalf("could not open db connection: %s", err)
+//	    }
+//	    db.Query("select 1")
+//	}
 //
 // The above code:
 // * registers the hotload driver with database/sql
@@ -42,7 +42,8 @@
 // hostname in the URL specifies the real database driver. Finally the path and query parameters
 // are left for the hotload strategy plugin to configure themselves. Below is an example
 // of a lib/pq postgres connection string that would have been stored at /tmp/myconfig.txt
-//     user=pqgotest dbname=pqgotest sslmode=verify-full
+//
+//	user=pqgotest dbname=pqgotest sslmode=verify-full
 package hotload
 
 import (
@@ -50,10 +51,11 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
-	"github.com/sirupsen/logrus"
 	"net/url"
 	"sort"
 	"sync"
+
+	"github.com/sirupsen/logrus"
 )
 
 // Strategy is the plugin interface for hotload.
@@ -246,6 +248,8 @@ func (h *hdriver) Open(name string) (driver.Conn, error) {
 	defer mu.Unlock()
 
 	// look up in the chan group
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	cgroup, ok := h.cgroup[name]
 	if !ok {
 		strategy, ok := strategies[uri.Scheme]
