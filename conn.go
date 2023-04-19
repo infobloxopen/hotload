@@ -2,7 +2,9 @@ package hotload
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"sync"
 )
 
@@ -14,6 +16,47 @@ type managedConn struct {
 	reset  bool
 	killed bool
 	mu     sync.RWMutex
+}
+
+// BeginTx calls the underlying BeginTx method unless the supervising context
+// is closed.
+// Returns an error if the underlying driver doesn't implement
+// driver.ConnBeginTx interface and TxOptions are non default. If TxOptions are
+// of default values it will call the underlying Begin method as like sql
+// package.
+// If the context is canceled by the user this method will call Tx.Rollback.
+func (c *managedConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	select {
+	case <-c.ctx.Done():
+		c.conn.Close()
+		return nil, driver.ErrBadConn
+	default:
+	}
+
+	if conn, ok := c.conn.(driver.ConnBeginTx); ok {
+		return conn.BeginTx(ctx, opts)
+	}
+
+	// same as is defined in go sql package to call Begin method if the TxOptions are default
+	if sql.IsolationLevel(opts.Isolation) != sql.LevelDefault {
+		return nil, errors.New("hotload: underlying driver does not support non-default isolation level")
+	}
+
+	if opts.ReadOnly {
+		return nil, errors.New("hotload: underlying driver does not support read-only transactions")
+	}
+
+	tx, err := c.conn.Begin()
+	if err == nil {
+		select {
+		default:
+		case <-ctx.Done():
+			tx.Rollback()
+			return nil, ctx.Err()
+		}
+	}
+
+	return tx, err
 }
 
 func newManagedConn(ctx context.Context, conn driver.Conn) *managedConn {
