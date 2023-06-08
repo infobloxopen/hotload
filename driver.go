@@ -51,10 +51,11 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
-	"github.com/sirupsen/logrus"
 	"net/url"
 	"sort"
 	"sync"
+
+	"github.com/sirupsen/logrus"
 )
 
 // Strategy is the plugin interface for hotload.
@@ -66,6 +67,7 @@ type Strategy interface {
 }
 
 const forceKill = "forceKill"
+const driverOptions = "driverOptions"
 
 var (
 	ErrUnsupportedStrategy       = fmt.Errorf("unsupported hotload strategy")
@@ -73,16 +75,37 @@ var (
 	ErrUnknownDriver             = fmt.Errorf("target driver is not registered with hotload")
 
 	mu         sync.RWMutex
-	sqlDrivers = make(map[string]driver.Driver)
+	sqlDrivers = make(map[string]*driverInstance)
 	strategies = make(map[string]Strategy)
 
 	logger *logrus.Logger
 )
 
+type driverInstance struct {
+	driver  driver.Driver
+	options map[string]string
+}
+
+type driverOption func(*driverInstance)
+
+// WithDriverOptions allows you to specify query parameters to the underlying driver.
+// The underlying driver must support URL style connection strings. The given options
+// are appended to the connection string when a connection is opened.
+func WithDriverOptions(options map[string]string) driverOption {
+	return func(d *driverInstance) {
+		if d.options == nil {
+			d.options = make(map[string]string)
+		}
+		for k, v := range options {
+			d.options[k] = v
+		}
+	}
+}
+
 // RegisterSQLDriver makes a database driver available by the provided name.
 // If RegisterSQLDriver is called twice with the same name or if driver is nil,
 // it panics.
-func RegisterSQLDriver(name string, driver driver.Driver) {
+func RegisterSQLDriver(name string, driver driver.Driver, options ...driverOption) {
 	mu.Lock()
 	defer mu.Unlock()
 	if driver == nil {
@@ -91,14 +114,14 @@ func RegisterSQLDriver(name string, driver driver.Driver) {
 	if _, dup := sqlDrivers[name]; dup {
 		panic("hotload: Register called twice for driver " + name)
 	}
-	sqlDrivers[name] = driver
+	sqlDrivers[name] = &driverInstance{driver: driver}
 }
 
 func unregisterAll() {
 	mu.Lock()
 	defer mu.Unlock()
 	// For tests.
-	sqlDrivers = make(map[string]driver.Driver)
+	sqlDrivers = make(map[string]*driverInstance)
 	strategies = make(map[string]Strategy)
 }
 
@@ -165,7 +188,7 @@ type chanGroup struct {
 	parentCtx context.Context
 	ctx       context.Context
 	cancel    context.CancelFunc
-	sqlDriver driver.Driver
+	sqlDriver *driverInstance
 	mu        sync.RWMutex
 	forceKill bool
 	conns     []*managedConn
@@ -213,10 +236,33 @@ func (cg *chanGroup) resetConnections() {
 	cg.conns = make([]*managedConn, 0)
 }
 
+func mergeConnectionStringOptions(dsn string, options map[string]string) (string, error) {
+	if len(options) == 0 {
+		return dsn, nil
+	}
+	u, err := url.ParseRequestURI(dsn)
+	if err != nil {
+		return "", fmt.Errorf("unable to parse connection string when specifying extra driver options: %v", err)
+	}
+	values, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return "", fmt.Errorf("unable to parse query options in connection string when specifying extra driver options: %v", err)
+	}
+	for k, v := range options {
+		values.Set(k, v)
+	}
+	u.RawQuery = values.Encode()
+	return u.String(), nil
+}
+
 func (cg *chanGroup) Open() (driver.Conn, error) {
 	cg.mu.Lock()
 	defer cg.mu.Unlock()
-	conn, err := cg.sqlDriver.Open(cg.value)
+	dsn, err := mergeConnectionStringOptions(cg.value, cg.sqlDriver.options)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := cg.sqlDriver.driver.Open(dsn)
 	if err != nil {
 		return conn, err
 	}
