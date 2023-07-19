@@ -1,17 +1,19 @@
 package integrationtests
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"io/ioutil"
+	"log"
+	"time"
+
 	"github.com/infobloxopen/hotload"
 	_ "github.com/infobloxopen/hotload/fsnotify"
 	"github.com/lib/pq"
 	_ "github.com/lib/pq"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	"io/ioutil"
-	"log"
-	"time"
 )
 
 const (
@@ -101,6 +103,26 @@ var _ = Describe("hotload integration tests", func() {
 		err = db.Ping()
 		if err != nil {
 			Fail(fmt.Sprintf("err pinging db: %v", err))
+		}
+	})
+
+	BeforeEach(func() {
+		setDSN(hotloadTestDsn, configPath)
+		hltDb = openDb(hotloadTestDsn)
+		hlt1Db = openDb(hotloadTest1Dsn)
+		newDb, err := sql.Open("hotload", "fsnotify://postgres"+configPath)
+		if err != nil {
+			Fail(fmt.Sprintf("error opening db: %v", err))
+		}
+
+		db = newDb
+
+		readonlytx, err := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			Fail(fmt.Sprintf("error beginning readonly tx: %v", err))
+		}
+		if _, err := readonlytx.Exec("SELECT 1"); err != nil {
+			Fail(fmt.Sprintf("error executing readonly tx: %v", err))
 		}
 	})
 
