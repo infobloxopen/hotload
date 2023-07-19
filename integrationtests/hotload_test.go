@@ -117,13 +117,18 @@ var _ = Describe("hotload integration tests", func() {
 
 		db = newDb
 
+		log := log.New(GinkgoWriter, "hotload: ", log.LstdFlags)
+
+		log.Printf("starting readonly tx")
 		readonlytx, err := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
 		if err != nil {
 			Fail(fmt.Sprintf("error beginning readonly tx: %v", err))
 		}
+		log.Printf("executing readonly tx")
 		if _, err := readonlytx.Exec("SELECT 1"); err != nil {
 			Fail(fmt.Sprintf("error executing readonly tx: %v", err))
 		}
+		log.Print("done readonly tx")
 	})
 
 	It("should connect to new db when file changes", func() {
