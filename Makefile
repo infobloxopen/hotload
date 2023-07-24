@@ -20,7 +20,7 @@ build: vet
 get-ginkgo:
 	go get github.com/onsi/ginkgo/ginkgo
 
-test: vet get-ginkgo
+test: vet
 	go test -race github.com/infobloxopen/hotload github.com/infobloxopen/hotload/fsnotify
 
 
@@ -39,7 +39,7 @@ integ-test-image: .integ-test-image-$(GIT_COMMIT)
 deploy-integration-tests:
 	helm upgrade hotload-integration-tests integrationtests/helm/hotload-integration-tests -i --set image.tag=$(GIT_COMMIT)
 
-build-test: vet get-ginkgo
+build-test: vet
 	go test -c ./integrationtests
 
 kind-create-cluster:
