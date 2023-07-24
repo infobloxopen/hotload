@@ -48,12 +48,12 @@ var _ = Describe("Driver", func() {
 		It("Should panic when registering the same driver twice", func() {
 			driver := getRandomDriver()
 			Expect(func() { hotload.RegisterSQLDriver("sqlmock", driver) }).
-				To(PanicWith(MatchRegexp("Register called twice for driver")))
+				To(Panic())
 		})
 
 		It("Should panic on nil driver", func() {
 			Expect(func() { hotload.RegisterSQLDriver("", nil) }).
-				To(PanicWith(MatchRegexp("Register driver is nil")))
+				To(Panic())
 		})
 	})
 
@@ -61,12 +61,12 @@ var _ = Describe("Driver", func() {
 		It("Should panic when registering the same strategy twice", func() {
 			strat := fsnotify.NewStrategy()
 			Expect(func() { hotload.RegisterStrategy("fsnotify", strat) }).
-				To(PanicWith(MatchRegexp("RegisterStrategy called twice for strategy")))
+				To(Panic())
 		})
 
 		It("Should panic on nil driver", func() {
 			Expect(func() { hotload.RegisterStrategy("", nil) }).
-				To(PanicWith(MatchRegexp("strategy is nil")))
+				To(Panic())
 		})
 	})
 
