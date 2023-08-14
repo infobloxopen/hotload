@@ -2,7 +2,6 @@ package fsnotify
 
 import (
 	"context"
-	rfsnotify "github.com/fsnotify/fsnotify"
 	"io/ioutil"
 	"log"
 	"net/url"
@@ -10,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	rfsnotify "github.com/fsnotify/fsnotify"
 	"github.com/infobloxopen/hotload"
 )
 
@@ -98,8 +98,9 @@ func (s *Strategy) setVal(pth string, val string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.paths[pth].value = val
+	values := s.paths[pth].values
 	go func() {
-		s.paths[pth].values <- val
+		values <- val
 	}()
 }
 
