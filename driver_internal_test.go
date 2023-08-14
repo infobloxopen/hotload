@@ -1,8 +1,64 @@
 package hotload
 
 import (
+	"database/sql/driver"
+	"fmt"
+	"reflect"
 	"testing"
 )
+
+type testDriver struct {
+	options map[string]string
+}
+
+func (d *testDriver) Open(name string) (driver.Conn, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func withConnectionStringOptions(options map[string]string) driverOption {
+	return func(di *driverInstance) {
+		di.options = options
+	}
+}
+
+func TestRegisterSQLDriverWithOptions(t *testing.T) {
+	type args struct {
+		name    string
+		driver  driver.Driver
+		options []driverOption
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		{
+			name: "driver with an option",
+			args: args{
+				name:   "test with options",
+				driver: &testDriver{},
+				options: []driverOption{
+					withConnectionStringOptions(map[string]string{"a": "b"}),
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			RegisterSQLDriver(tt.args.name, tt.args.driver, tt.args.options...)
+			mu.Lock()
+			defer mu.Unlock()
+
+			d, ok := sqlDrivers[tt.args.name]
+			if !ok {
+				t.Errorf("RegisterSQLDriver() did not register the driver")
+			}
+			gotOptions := d.driver.(*testDriver).options
+			if reflect.DeepEqual(gotOptions, tt.args.options) {
+				t.Errorf("RegisterSQLDriver() did not set the options")
+			}
+		})
+	}
+}
 
 func Test_mergeConnectionStringOptions(t *testing.T) {
 	type args struct {
