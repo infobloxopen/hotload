@@ -114,7 +114,12 @@ func RegisterSQLDriver(name string, driver driver.Driver, options ...driverOptio
 	if _, dup := sqlDrivers[name]; dup {
 		panic("hotload: Register called twice for driver " + name)
 	}
-	sqlDrivers[name] = &driverInstance{driver: driver}
+	di := &driverInstance{driver: driver}
+	for _, opt := range options {
+		opt(di)
+	}
+
+	sqlDrivers[name] = di
 }
 
 func unregisterAll() {
