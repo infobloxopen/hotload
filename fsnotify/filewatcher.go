@@ -2,7 +2,6 @@ package fsnotify
 
 import (
 	"context"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"net/url"
