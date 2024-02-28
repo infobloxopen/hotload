@@ -46,7 +46,7 @@ type pathWatch struct {
 func readConfigFile(path string) (v []byte, err error) {
 	v, err = ioutil.ReadFile(path)
 	if err != nil {
-		return nil, errors.Wrap(err, fmt.Sprintf("could not read %v", path))
+		return nil, errors.Wrapf(err, "could not read %v", path)
 	}
 	v = []byte(strings.TrimSpace(string(v)))
 	return
