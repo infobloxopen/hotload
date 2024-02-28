@@ -11,6 +11,7 @@ import (
 
 	rfsnotify "github.com/fsnotify/fsnotify"
 	"github.com/infobloxopen/hotload"
+	"github.com/pkg/errors"
 )
 
 func init() {
@@ -44,7 +45,7 @@ type pathWatch struct {
 func readConfigFile(path string) (v []byte, err error) {
 	v, err = ioutil.ReadFile(path)
 	if err != nil {
-		return
+		return nil, errors.Wrapf(err, "could not read %v", path)
 	}
 	v = []byte(strings.TrimSpace(string(v)))
 	return
