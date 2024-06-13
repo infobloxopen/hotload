@@ -16,6 +16,8 @@ type managedConn struct {
 	reset  bool
 	killed bool
 	mu     sync.RWMutex
+
+	execQueryCounter int
 }
 
 // BeginTx calls the underlying BeginTx method unless the supervising context
@@ -34,7 +36,12 @@ func (c *managedConn) BeginTx(ctx context.Context, opts driver.TxOptions) (drive
 	}
 
 	if conn, ok := c.conn.(driver.ConnBeginTx); ok {
-		return conn.BeginTx(ctx, opts)
+		tx, err := conn.BeginTx(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &managedTx{tx: tx, conn: c, ctx: ctx}, nil
 	}
 
 	// same as is defined in go sql package to call Begin method if the TxOptions are default
@@ -79,6 +86,7 @@ func (c *managedConn) ExecContext(ctx context.Context, query string, args []driv
 	if !ok {
 		return nil, driver.ErrSkip
 	}
+	c.incExecQueryCounter() //increment the exec counter to keep track of the number of exec calls
 	return conn.ExecContext(ctx, query, args)
 }
 
@@ -183,4 +191,16 @@ func (c *managedConn) GetKill() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.killed
+}
+
+func (c *managedConn) incExecQueryCounter() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.execQueryCounter++
+}
+
+func (c *managedConn) resetExecQueryCounter() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.execQueryCounter = 0
 }
