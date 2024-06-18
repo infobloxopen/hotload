@@ -6,7 +6,7 @@ import (
 )
 
 // managedTx wraps a sql/driver.Tx so that it can store the context of the
-// transaction and clean up the execQueryCounter on Commit or Rollback.
+// transaction and clean up the execqueryCallsCounter on Commit or Rollback.
 type managedTx struct {
 	tx   driver.Tx
 	conn *managedConn
@@ -25,14 +25,19 @@ func (t *managedTx) Rollback() error {
 	return err
 }
 
-func observeExecQuerySummary(ctx context.Context, counter int) {
+func observeSQLStmtsSummary(ctx context.Context, execStmtsCounter, queryStmtsCounter int) {
 	labels := GetExecLabelsFromContext(ctx)
-	execQuerySummary.WithLabelValues(labels[GRPCServiceKey], labels[GRPCMethodKey]).Observe(float64(counter))
+	service := labels[GRPCServiceKey]
+	method := labels[GRPCMethodKey]
+
+	sqlStmtsSummary.WithLabelValues(service, method, ExecStatement).Observe(float64(execStmtsCounter))
+	sqlStmtsSummary.WithLabelValues(service, method, QueryStatement).Observe(float64(queryStmtsCounter))
 }
 
 func (t *managedTx) cleanup() {
-	observeExecQuerySummary(t.ctx, t.conn.execQueryCounter)
-	t.conn.resetExecQueryCounter()
+	observeSQLStmtsSummary(t.ctx, t.conn.execStmtsCounter, t.conn.queryStmtsCounter)
+	t.conn.resetExecStmtsCounter()
+	t.conn.resetQueryStmtsCounter()
 }
 
 var promLabelKey = struct{}{}
