@@ -100,24 +100,24 @@ var _ = Describe("PrometheusMetrics", func() {
 	`
 
 	var service1Metrics = `
-		transaction_sql_stmts_total_sum{grpc_method="service_1",grpc_service="method_1",stmt="exec"} 3
-		transaction_sql_stmts_total_count{grpc_method="service_1",grpc_service="method_1",stmt="exec"} 1
-		transaction_sql_stmts_total_sum{grpc_method="service_1",grpc_service="method_1",stmt="query"} 3
-		transaction_sql_stmts_total_count{grpc_method="service_1",grpc_service="method_1",stmt="query"} 1
+		transaction_sql_stmts_total_sum{grpc_method="method_1",grpc_service="service_1",stmt="exec"} 3
+		transaction_sql_stmts_total_count{grpc_method="method_1",grpc_service="service_1",stmt="exec"} 1
+		transaction_sql_stmts_total_sum{grpc_method="method_1",grpc_service="service_1",stmt="query"} 3
+		transaction_sql_stmts_total_count{grpc_method="method_1",grpc_service="service_1",stmt="query"} 1
 	`
 
 	var service2Metrics = `
-		transaction_sql_stmts_total_sum{grpc_method="service_2",grpc_service="method_2",stmt="exec"} 4
-		transaction_sql_stmts_total_count{grpc_method="service_2",grpc_service="method_2",stmt="exec"} 1
-		transaction_sql_stmts_total_sum{grpc_method="service_2",grpc_service="method_2",stmt="query"} 4
-		transaction_sql_stmts_total_count{grpc_method="service_2",grpc_service="method_2",stmt="query"} 1
+		transaction_sql_stmts_total_sum{grpc_method="method_2",grpc_service="service_2",stmt="exec"} 4
+		transaction_sql_stmts_total_count{grpc_method="method_2",grpc_service="service_2",stmt="exec"} 1
+		transaction_sql_stmts_total_sum{grpc_method="method_2",grpc_service="service_2",stmt="query"} 4
+		transaction_sql_stmts_total_count{grpc_method="method_2",grpc_service="service_2",stmt="query"} 1
 	`
 
 	var service1RerunMetrics = `
-		transaction_sql_stmts_total_sum{grpc_method="service_1",grpc_service="method_1",stmt="exec"} 4
-		transaction_sql_stmts_total_count{grpc_method="service_1",grpc_service="method_1",stmt="exec"} 2
-		transaction_sql_stmts_total_sum{grpc_method="service_1",grpc_service="method_1",stmt="query"} 4
-		transaction_sql_stmts_total_count{grpc_method="service_1",grpc_service="method_1",stmt="query"} 2
+		transaction_sql_stmts_total_sum{grpc_method="method_1",grpc_service="service_1",stmt="exec"} 4
+		transaction_sql_stmts_total_count{grpc_method="method_1",grpc_service="service_1",stmt="exec"} 2
+		transaction_sql_stmts_total_sum{grpc_method="method_1",grpc_service="service_1",stmt="query"} 4
+		transaction_sql_stmts_total_count{grpc_method="method_1",grpc_service="service_1",stmt="query"} 2
 	`
 
 	var noMethodMetrics = `
@@ -130,7 +130,7 @@ var _ = Describe("PrometheusMetrics", func() {
 	It("Should emit the correct metrics", func() {
 		mc := newManagedConn(context.Background(), mockDriverConn{})
 
-		ctx := ContextWithExecLabels(context.Background(), map[string]string{"grpc_method": "service_1", "grpc_service": "method_1"})
+		ctx := ContextWithExecLabels(context.Background(), map[string]string{"grpc_method": "method_1", "grpc_service": "service_1"})
 
 		// begin a transaction
 		tx, err := mc.BeginTx(ctx, driver.TxOptions{})
@@ -160,7 +160,7 @@ var _ = Describe("PrometheusMetrics", func() {
 
 		// reset the metrics
 		// new context
-		ctx = ContextWithExecLabels(context.Background(), map[string]string{"grpc_method": "service_2", "grpc_service": "method_2"})
+		ctx = ContextWithExecLabels(context.Background(), map[string]string{"grpc_method": "method_2", "grpc_service": "service_2"})
 		// begin a transaction
 		tx, err = mc.BeginTx(ctx, driver.TxOptions{})
 		Expect(err).ShouldNot(HaveOccurred())
@@ -190,7 +190,7 @@ var _ = Describe("PrometheusMetrics", func() {
 		Expect(err).ShouldNot(HaveOccurred())
 
 		// rerun with initial metrics
-		ctx = ContextWithExecLabels(context.Background(), map[string]string{"grpc_method": "service_1", "grpc_service": "method_1"})
+		ctx = ContextWithExecLabels(context.Background(), map[string]string{"grpc_method": "method_1", "grpc_service": "service_1"})
 		// begin a transaction
 		tx, err = mc.BeginTx(ctx, driver.TxOptions{})
 		Expect(err).ShouldNot(HaveOccurred())
