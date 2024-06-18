@@ -19,7 +19,7 @@ const (
 // sqlStmtsSummary is a prometheus metric to keep track of the number of times
 // a sql statement is called in a transaction by statement type per grpc service
 var sqlStmtsSummary = prometheus.NewSummaryVec(prometheus.SummaryOpts{
-	Name: "transaction_sql_stmts_total",
+	Name: "transaction_sql_stmts",
 	Help: "The number of sql stmts called in a transaction by statement type per grpc service and method",
 }, []string{GRPCServiceKey, GRPCMethodKey, StatementKey})
 

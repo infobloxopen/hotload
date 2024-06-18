@@ -95,36 +95,36 @@ func (mockDriverConn) QueryContext(ctx context.Context, query string, args []dri
 
 var _ = Describe("PrometheusMetrics", func() {
 	const help = `
-		# HELP transaction_sql_stmts_total The number of sql stmts called in a transaction by statement type per grpc service and method
-		# TYPE transaction_sql_stmts_total summary
+		# HELP transaction_sql_stmts The number of sql stmts called in a transaction by statement type per grpc service and method
+		# TYPE transaction_sql_stmts summary
 	`
 
 	var service1Metrics = `
-		transaction_sql_stmts_total_sum{grpc_method="method_1",grpc_service="service_1",stmt="exec"} 3
-		transaction_sql_stmts_total_count{grpc_method="method_1",grpc_service="service_1",stmt="exec"} 1
-		transaction_sql_stmts_total_sum{grpc_method="method_1",grpc_service="service_1",stmt="query"} 3
-		transaction_sql_stmts_total_count{grpc_method="method_1",grpc_service="service_1",stmt="query"} 1
+		transaction_sql_stmts_sum{grpc_method="method_1",grpc_service="service_1",stmt="exec"} 3
+		transaction_sql_stmts_count{grpc_method="method_1",grpc_service="service_1",stmt="exec"} 1
+		transaction_sql_stmts_sum{grpc_method="method_1",grpc_service="service_1",stmt="query"} 3
+		transaction_sql_stmts_count{grpc_method="method_1",grpc_service="service_1",stmt="query"} 1
 	`
 
 	var service2Metrics = `
-		transaction_sql_stmts_total_sum{grpc_method="method_2",grpc_service="service_2",stmt="exec"} 4
-		transaction_sql_stmts_total_count{grpc_method="method_2",grpc_service="service_2",stmt="exec"} 1
-		transaction_sql_stmts_total_sum{grpc_method="method_2",grpc_service="service_2",stmt="query"} 4
-		transaction_sql_stmts_total_count{grpc_method="method_2",grpc_service="service_2",stmt="query"} 1
+		transaction_sql_stmts_sum{grpc_method="method_2",grpc_service="service_2",stmt="exec"} 4
+		transaction_sql_stmts_count{grpc_method="method_2",grpc_service="service_2",stmt="exec"} 1
+		transaction_sql_stmts_sum{grpc_method="method_2",grpc_service="service_2",stmt="query"} 4
+		transaction_sql_stmts_count{grpc_method="method_2",grpc_service="service_2",stmt="query"} 1
 	`
 
 	var service1RerunMetrics = `
-		transaction_sql_stmts_total_sum{grpc_method="method_1",grpc_service="service_1",stmt="exec"} 4
-		transaction_sql_stmts_total_count{grpc_method="method_1",grpc_service="service_1",stmt="exec"} 2
-		transaction_sql_stmts_total_sum{grpc_method="method_1",grpc_service="service_1",stmt="query"} 4
-		transaction_sql_stmts_total_count{grpc_method="method_1",grpc_service="service_1",stmt="query"} 2
+		transaction_sql_stmts_sum{grpc_method="method_1",grpc_service="service_1",stmt="exec"} 4
+		transaction_sql_stmts_count{grpc_method="method_1",grpc_service="service_1",stmt="exec"} 2
+		transaction_sql_stmts_sum{grpc_method="method_1",grpc_service="service_1",stmt="query"} 4
+		transaction_sql_stmts_count{grpc_method="method_1",grpc_service="service_1",stmt="query"} 2
 	`
 
 	var noMethodMetrics = `
-		transaction_sql_stmts_total_sum{grpc_method="",grpc_service="",stmt="exec"} 1
-		transaction_sql_stmts_total_count{grpc_method="",grpc_service="",stmt="exec"} 1
-		transaction_sql_stmts_total_sum{grpc_method="",grpc_service="",stmt="query"} 1
-		transaction_sql_stmts_total_count{grpc_method="",grpc_service="",stmt="query"} 1
+		transaction_sql_stmts_sum{grpc_method="",grpc_service="",stmt="exec"} 1
+		transaction_sql_stmts_count{grpc_method="",grpc_service="",stmt="exec"} 1
+		transaction_sql_stmts_sum{grpc_method="",grpc_service="",stmt="query"} 1
+		transaction_sql_stmts_count{grpc_method="",grpc_service="",stmt="query"} 1
 	`
 
 	It("Should emit the correct metrics", func() {
