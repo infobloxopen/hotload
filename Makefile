@@ -7,6 +7,9 @@ get:
 fmt: get
 	go fmt ./...
 
+tidy:
+	go mod tidy
+
 # assert that there is no difference after running format
 no-diff:
 	git diff --exit-code
@@ -25,7 +28,7 @@ test: vet get-ginkgo
 
 
 # test target which includes the no-diff fail condition
-ci-test: fmt no-diff test
+ci-test: fmt tidy no-diff test
 
 test-docker:
 	docker build -f Dockerfile.test .
