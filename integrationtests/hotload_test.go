@@ -3,15 +3,16 @@ package integrationtests
 import (
 	"database/sql"
 	"fmt"
+	"io/ioutil"
+	"log"
+	"time"
+
 	"github.com/infobloxopen/hotload"
 	_ "github.com/infobloxopen/hotload/fsnotify"
 	"github.com/lib/pq"
 	_ "github.com/lib/pq"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	"io/ioutil"
-	"log"
-	"time"
 )
 
 const (

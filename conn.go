@@ -16,6 +16,9 @@ type managedConn struct {
 	reset  bool
 	killed bool
 	mu     sync.RWMutex
+
+	execStmtsCounter  int // count the number of exec calls in a transaction
+	queryStmtsCounter int // count the number of query calls in a transaction
 }
 
 // BeginTx calls the underlying BeginTx method unless the supervising context
@@ -34,7 +37,12 @@ func (c *managedConn) BeginTx(ctx context.Context, opts driver.TxOptions) (drive
 	}
 
 	if conn, ok := c.conn.(driver.ConnBeginTx); ok {
-		return conn.BeginTx(ctx, opts)
+		tx, err := conn.BeginTx(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &managedTx{tx: tx, conn: c, ctx: ctx}, nil
 	}
 
 	// same as is defined in go sql package to call Begin method if the TxOptions are default
@@ -71,6 +79,7 @@ func (c *managedConn) Exec(query string, args []driver.Value) (driver.Result, er
 	if !ok {
 		return nil, driver.ErrSkip
 	}
+	c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
 	return conn.Exec(query, args)
 }
 
@@ -79,6 +88,7 @@ func (c *managedConn) ExecContext(ctx context.Context, query string, args []driv
 	if !ok {
 		return nil, driver.ErrSkip
 	}
+	c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
 	return conn.ExecContext(ctx, query, args)
 }
 
@@ -95,6 +105,7 @@ func (c *managedConn) Query(query string, args []driver.Value) (driver.Rows, err
 	if !ok {
 		return nil, driver.ErrSkip
 	}
+	c.incQueryStmtsCounter() //increment the query counter to keep track of the number of query calls
 	return conn.Query(query, args)
 }
 
@@ -103,6 +114,7 @@ func (c *managedConn) QueryContext(ctx context.Context, query string, args []dri
 	if !ok {
 		return nil, driver.ErrSkip
 	}
+	c.incQueryStmtsCounter() //increment the query counter to keep track of the number of query calls
 	return conn.QueryContext(ctx, query, args)
 }
 
@@ -183,4 +195,28 @@ func (c *managedConn) GetKill() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.killed
+}
+
+func (c *managedConn) incExecStmtsCounter() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.execStmtsCounter++
+}
+
+func (c *managedConn) resetExecStmtsCounter() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.execStmtsCounter = 0
+}
+
+func (c *managedConn) incQueryStmtsCounter() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.queryStmtsCounter++
+}
+
+func (c *managedConn) resetQueryStmtsCounter() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.queryStmtsCounter = 0
 }
