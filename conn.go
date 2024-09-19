@@ -17,6 +17,9 @@ type managedConn struct {
 	killed bool
 	mu     sync.RWMutex
 
+	// callback function to be called after the connection is closed
+	afterClose func(*managedConn)
+
 	execStmtsCounter  int // count the number of exec calls in a transaction
 	queryStmtsCounter int // count the number of query calls in a transaction
 }
@@ -31,7 +34,7 @@ type managedConn struct {
 func (c *managedConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
 	select {
 	case <-c.ctx.Done():
-		c.conn.Close()
+		c.close()
 		return nil, driver.ErrBadConn
 	default:
 	}
@@ -67,10 +70,11 @@ func (c *managedConn) BeginTx(ctx context.Context, opts driver.TxOptions) (drive
 	return tx, err
 }
 
-func newManagedConn(ctx context.Context, conn driver.Conn) *managedConn {
+func newManagedConn(ctx context.Context, conn driver.Conn, afterClose func(*managedConn)) *managedConn {
 	return &managedConn{
-		ctx:  ctx,
-		conn: conn,
+		ctx:        ctx,
+		conn:       conn,
+		afterClose: afterClose,
 	}
 }
 
@@ -121,7 +125,7 @@ func (c *managedConn) QueryContext(ctx context.Context, query string, args []dri
 func (c *managedConn) Prepare(query string) (driver.Stmt, error) {
 	select {
 	case <-c.ctx.Done():
-		c.conn.Close()
+		c.close()
 		return nil, driver.ErrBadConn
 	default:
 	}
@@ -133,7 +137,7 @@ func (c *managedConn) Prepare(query string) (driver.Stmt, error) {
 func (c *managedConn) Begin() (driver.Tx, error) {
 	select {
 	case <-c.ctx.Done():
-		c.conn.Close()
+		c.close()
 		return nil, driver.ErrBadConn
 	default:
 	}
@@ -143,7 +147,7 @@ func (c *managedConn) Begin() (driver.Tx, error) {
 func (c *managedConn) IsValid() bool {
 	select {
 	case <-c.ctx.Done():
-		c.conn.Close()
+		c.close()
 		return false
 	default:
 	}
@@ -170,13 +174,20 @@ func (c *managedConn) ResetSession(ctx context.Context) error {
 func (c *managedConn) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	err := c.conn.Close()
+	err := c.close()
 
 	if err == nil {
 		c.killed = true
 	}
 
 	return err
+}
+
+func (c *managedConn) close() error {
+	if c.afterClose != nil {
+		defer c.afterClose(c)
+	}
+	return c.conn.Close()
 }
 
 func (c *managedConn) GetReset() bool {
