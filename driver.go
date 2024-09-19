@@ -272,10 +272,21 @@ func (cg *chanGroup) Open() (driver.Conn, error) {
 		return conn, err
 	}
 
-	manConn := newManagedConn(cg.ctx, conn)
+	manConn := newManagedConn(cg.ctx, conn, cg.remove)
 	cg.conns = append(cg.conns, manConn)
 
 	return manConn, nil
+}
+
+func (cg *chanGroup) remove(conn *managedConn) {
+	cg.mu.Lock()
+	defer cg.mu.Unlock()
+	for i, c := range cg.conns {
+		if c == conn {
+			cg.conns = append(cg.conns[:i], cg.conns[i+1:]...)
+			return
+		}
+	}
 }
 
 func (cg *chanGroup) parseValues(vs url.Values) {
