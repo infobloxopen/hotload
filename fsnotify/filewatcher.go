@@ -52,9 +52,9 @@ func readConfigFile(path string) (v []byte, err error) {
 }
 
 func resync(w watcher, pth string) (string, error) {
+	log.Printf("fsnotify: Path Name-Resync=%s", pth)
 	err := w.Remove(pth)
-	if err != nil {
-		log.Printf("fsnotify: Path Name-Resync=%s", pth)
+	if err != nil && !errors.Is(err, rfsnotify.ErrNonExistentWatch) {
 		return "", err
 	}
 	bs, err := readConfigFile(pth)
