@@ -3,14 +3,14 @@ package fsnotify
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"os"
+	"time"
+
 	rfsnotify "github.com/fsnotify/fsnotify"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/ginkgo/extensions/table"
 	. "github.com/onsi/gomega"
-	"io/ioutil"
-	"net/url"
-	"os"
-	"time"
 )
 
 func assertStringFromChannel(name string, want string, from <-chan string) {
@@ -113,7 +113,7 @@ var _ = Describe("FileWatcher", func() {
 		}),
 		Entry("URL surrounded with whitespaces --> URL trimmed", test{
 			setup: func(args *args) {
-				f, _ := ioutil.TempFile("", "unittest_")
+				f, _ := os.CreateTemp("", "unittest_")
 				f.Write([]byte("\r\n \t " + paramsURL + " \t \r\n"))
 				args.pth = f.Name()
 				f.Close()
@@ -131,7 +131,7 @@ var _ = Describe("FileWatcher", func() {
 		}),
 		Entry("params surrounded with whitespaces --> params trimmed", test{
 			setup: func(args *args) {
-				f, _ := ioutil.TempFile("", "unittest_")
+				f, _ := os.CreateTemp("", "unittest_")
 				f.Write([]byte("\r\n \t " + paramsParsed + " \t \r\n"))
 				args.pth = f.Name()
 				f.Close()
@@ -149,7 +149,7 @@ var _ = Describe("FileWatcher", func() {
 		}),
 		Entry("a, update b", test{
 			setup: func(args *args) {
-				f, _ := ioutil.TempFile("", "unittest_")
+				f, _ := os.CreateTemp("", "unittest_")
 				f.Write([]byte("a"))
 				args.pth = f.Name()
 				f.Close()
@@ -159,7 +159,7 @@ var _ = Describe("FileWatcher", func() {
 				if value != "a" {
 					return fmt.Errorf("expected 'a' got %v", value)
 				}
-				ioutil.WriteFile(args.pth, []byte("b"), 0660)
+				os.WriteFile(args.pth, []byte("b"), 0660)
 				assertStringFromChannel("wating for update b", "b", values)
 				return nil
 			},
@@ -169,7 +169,7 @@ var _ = Describe("FileWatcher", func() {
 		}),
 		Entry("a, rm a, create b", test{
 			setup: func(args *args) {
-				f, _ := ioutil.TempFile("", "unittest_")
+				f, _ := os.CreateTemp("", "unittest_")
 				f.Write([]byte("a"))
 				args.pth = f.Name()
 				f.Close()
@@ -187,7 +187,7 @@ var _ = Describe("FileWatcher", func() {
 					return fmt.Errorf("expected no change, got %v", v)
 				case <-time.After(time.Second):
 				}
-				err = ioutil.WriteFile(args.pth, []byte("b"), 0660)
+				err = os.WriteFile(args.pth, []byte("b"), 0660)
 
 				Expect(err).ToNot(HaveOccurred(), "creating new file")
 
