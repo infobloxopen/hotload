@@ -2,9 +2,9 @@ package fsnotify
 
 import (
 	"context"
-	"io/ioutil"
 	"log"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -43,7 +43,7 @@ type pathWatch struct {
 }
 
 func readConfigFile(path string) (v []byte, err error) {
-	v, err = ioutil.ReadFile(path)
+	v, err = os.ReadFile(path)
 	if err != nil {
 		return nil, errors.Wrapf(err, "could not read %v", path)
 	}
@@ -52,7 +52,11 @@ func readConfigFile(path string) (v []byte, err error) {
 }
 
 func resync(w watcher, pth string) (string, error) {
-	w.Remove(pth)
+	err := w.Remove(pth)
+	if err != nil {
+		log.Printf("fsnotify: Path Name-Resync=%s", pth)
+		return "", err
+	}
 	bs, err := readConfigFile(pth)
 	if err != nil {
 		return "", err
@@ -65,6 +69,7 @@ func (s *Strategy) run() {
 	for {
 		select {
 		case e := <-s.watcher.GetEvents():
+			log.Printf("fsnotify: Path Name-Run=%s", e.Name)
 			if e.Op != rfsnotify.Write && e.Op != rfsnotify.Remove {
 				continue
 			}
@@ -98,6 +103,10 @@ func (s *Strategy) run() {
 func (s *Strategy) setVal(pth string, val string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, ok := s.paths[pth]; !ok {
+		log.Printf("fsnotify: Path not in map=%s", pth)
+		return
+	}
 	s.paths[pth].value = val
 	values := s.paths[pth].values
 	go func() {
@@ -120,6 +129,7 @@ func (s *Strategy) Watch(ctx context.Context, pth string, options url.Values) (v
 	}
 	notifier, found := s.paths[pth]
 	if !found {
+		log.Printf("fsnotify: Path Name-Init=%s", pth)
 		if err := s.watcher.Add(pth); err != nil {
 			return "", nil, err
 		}
