@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -116,6 +117,7 @@ func (s *Strategy) setVal(pth string, val string) {
 
 // Watch implements the hotload.Strategy interface.
 func (s *Strategy) Watch(ctx context.Context, pth string, options url.Values) (value string, values <-chan string, err error) {
+	pth = path.Clean(pth)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// if this is the first time this strategy is called, initialize ourselves

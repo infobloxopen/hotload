@@ -167,6 +167,26 @@ var _ = Describe("FileWatcher", func() {
 				os.Remove(args.pth)
 			},
 		}),
+		Entry("extra slash in path", test{
+			setup: func(args *args) {
+				f, _ := os.CreateTemp("", "unittest_")
+				f.Write([]byte("a"))
+				args.pth = "/" + f.Name()
+				f.Close()
+			},
+			wantErr: false,
+			post: func(args *args, value string, values <-chan string) error {
+				if value != "a" {
+					return fmt.Errorf("expected 'a' got %v", value)
+				}
+				os.WriteFile(args.pth, []byte("b"), 0660)
+				assertStringFromChannel("wating for update b", "b", values)
+				return nil
+			},
+			tearDown: func(args *args) {
+				os.Remove(args.pth)
+			},
+		}),
 		Entry("a, rm a, create b", test{
 			setup: func(args *args) {
 				f, _ := os.CreateTemp("", "unittest_")
