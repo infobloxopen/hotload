@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"sync"
 
+	"github.com/infobloxopen/hotload/logger"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
@@ -51,7 +52,7 @@ var _ = Describe("Driver", func() {
 				sqlDriver: nil,
 				mu:        sync.RWMutex{},
 				conns:     conns,
-				log:       DefaultLogger{},
+				log:       logger.DefaultLogger,
 			}
 		})
 

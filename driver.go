@@ -86,12 +86,6 @@ type driverInstance struct {
 	options map[string]string
 }
 
-type DefaultLogger struct{}
-
-func (d DefaultLogger) Debug(args ...any) {}
-func (d DefaultLogger) Info(args ...any)  {}
-func (d DefaultLogger) Error(args ...any) {}
-
 type driverOption func(*driverInstance)
 
 // WithDriverOptions allows you to specify query parameters to the underlying driver.
@@ -206,7 +200,7 @@ func (cg *chanGroup) run() {
 		select {
 		case <-cg.parentCtx.Done():
 			cg.cancel()
-			cg.log.Debug("cancelling chanGroup context")
+			cg.log("cancelling chanGroup context")
 			return
 		case v := <-cg.values:
 			if v == cg.value {
@@ -214,7 +208,7 @@ func (cg *chanGroup) run() {
 				continue
 			}
 			cg.valueChanged(v)
-			cg.log.Debug("connection information changed")
+			cg.log("connection information changed")
 		}
 	}
 }
@@ -293,11 +287,11 @@ func (cg *chanGroup) remove(conn *managedConn) {
 func (cg *chanGroup) parseValues(vs url.Values) {
 	cg.mu.Lock()
 	defer cg.mu.Unlock()
-	cg.log.Debug("parsing values", vs)
+	cg.log("parsing values", vs)
 	if v, ok := vs[forceKill]; ok {
 		firstValue := v[0]
 		cg.forceKill = firstValue == "true"
-		cg.log.Debug("forceKill set to true")
+		cg.log("forceKill set to true")
 	}
 }
 
@@ -346,13 +340,13 @@ func (h *hdriver) Open(name string) (driver.Conn, error) {
 func WithLogger(l logger.Logger) {
 	log = l
 	if log == nil {
-		log = DefaultLogger{}
+		log = logger.DefaultLogger
 	}
 }
 
 func GetLogger() logger.Logger {
 	if log == nil {
-		return DefaultLogger{}
+		return logger.DefaultLogger
 	}
 	return log
 }
