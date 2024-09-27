@@ -52,7 +52,7 @@ func readConfigFile(path string) (v []byte, err error) {
 }
 
 func resync(w watcher, pth string) (string, error) {
-	log.Debug("fsnotify: Path Name-Resync ", pth)
+	log("fsnotify: Path Name-Resync ", pth)
 	err := w.Remove(pth)
 	if err != nil && !errors.Is(err, rfsnotify.ErrNonExistentWatch) {
 		return "", err
@@ -69,7 +69,7 @@ func (s *Strategy) run() {
 	for {
 		select {
 		case e := <-s.watcher.GetEvents():
-			log.Debug("fsnotify: Path Name-Run ", e.Name)
+			log("fsnotify: Path Name-Run ", e.Name)
 			if e.Op != rfsnotify.Write && e.Op != rfsnotify.Remove {
 				continue
 			}
@@ -82,7 +82,7 @@ func (s *Strategy) run() {
 
 			s.setVal(e.Name, val)
 		case e := <-s.watcher.GetErrors():
-			log.Debug("got error: ", e)
+			log("got error: ", e)
 			break
 		case <-time.After(resyncPeriod):
 			var fixedPaths []string
@@ -104,7 +104,7 @@ func (s *Strategy) setVal(pth string, val string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.paths[pth]; !ok {
-		log.Debug("fsnotify: Path not in map ", pth)
+		log("fsnotify: Path not in map ", pth)
 		return
 	}
 	s.paths[pth].value = val
@@ -129,7 +129,7 @@ func (s *Strategy) Watch(ctx context.Context, pth string, options url.Values) (v
 	}
 	notifier, found := s.paths[pth]
 	if !found {
-		log.Debug("fsnotify: Path Name-Init ", pth)
+		log("fsnotify: Path Name-Init ", pth)
 		if err := s.watcher.Add(pth); err != nil {
 			return "", nil, err
 		}
