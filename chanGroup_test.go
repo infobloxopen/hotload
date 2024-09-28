@@ -3,9 +3,11 @@ package hotload
 import (
 	"context"
 	"database/sql/driver"
+	"sync"
+
+	"github.com/infobloxopen/hotload/logger"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	"sync"
 )
 
 type testConn struct {
@@ -50,6 +52,7 @@ var _ = Describe("Driver", func() {
 				sqlDriver: nil,
 				mu:        sync.RWMutex{},
 				conns:     conns,
+				log:       logger.DefaultLogger,
 			}
 		})
 

@@ -55,7 +55,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/sirupsen/logrus"
+	"github.com/infobloxopen/hotload/logger"
 )
 
 // Strategy is the plugin interface for hotload.
@@ -78,7 +78,7 @@ var (
 	sqlDrivers = make(map[string]*driverInstance)
 	strategies = make(map[string]Strategy)
 
-	logger *logrus.Logger
+	log logger.Logger
 )
 
 type driverInstance struct {
@@ -169,14 +169,8 @@ func Strategies() []string {
 	return list
 }
 
-// SetLogLevel specifies the logrus.Level for the hotload driver's logger
-func SetLogLevel(level logrus.Level) {
-	logger.SetLevel(level)
-}
-
 func init() {
 	sql.Register("hotload", &hdriver{ctx: context.Background(), cgroup: make(map[string]*chanGroup)})
-	logger = logrus.New()
 }
 
 // hdriver is the hotload driver.
@@ -197,6 +191,7 @@ type chanGroup struct {
 	mu        sync.RWMutex
 	forceKill bool
 	conns     []*managedConn
+	log       logger.Logger
 }
 
 // monitor the location for changes
@@ -205,7 +200,7 @@ func (cg *chanGroup) run() {
 		select {
 		case <-cg.parentCtx.Done():
 			cg.cancel()
-			logger.Debug("cancelling chanGroup context")
+			cg.log("cancelling chanGroup context")
 			return
 		case v := <-cg.values:
 			if v == cg.value {
@@ -213,7 +208,7 @@ func (cg *chanGroup) run() {
 				continue
 			}
 			cg.valueChanged(v)
-			logger.Debug("connection information changed")
+			cg.log("connection information changed")
 		}
 	}
 }
@@ -292,11 +287,11 @@ func (cg *chanGroup) remove(conn *managedConn) {
 func (cg *chanGroup) parseValues(vs url.Values) {
 	cg.mu.Lock()
 	defer cg.mu.Unlock()
-	logger.WithFields(logrus.Fields{"urlValues": vs}).Debug("parsing values")
+	cg.log("parsing values", vs)
 	if v, ok := vs[forceKill]; ok {
 		firstValue := v[0]
 		cg.forceKill = firstValue == "true"
-		logger.Debug("forceKill set to true")
+		cg.log("forceKill set to true")
 	}
 }
 
@@ -315,7 +310,6 @@ func (h *hdriver) Open(name string) (driver.Conn, error) {
 		if !ok {
 			return nil, ErrUnsupportedStrategy
 		}
-
 		sqlDriver, ok := sqlDrivers[uri.Host]
 		if !ok {
 			return nil, ErrUnknownDriver
@@ -334,10 +328,25 @@ func (h *hdriver) Open(name string) (driver.Conn, error) {
 			cancel:    cancel,
 			sqlDriver: sqlDriver,
 			conns:     make([]*managedConn, 0),
+			log:       GetLogger(),
 		}
 		cgroup.parseValues(queryParams)
 		h.cgroup[name] = cgroup
 		go cgroup.run()
 	}
 	return cgroup.Open()
+}
+
+func WithLogger(l logger.Logger) {
+	log = l
+	if log == nil {
+		log = logger.DefaultLogger
+	}
+}
+
+func GetLogger() logger.Logger {
+	if log == nil {
+		return logger.DefaultLogger
+	}
+	return log
 }
