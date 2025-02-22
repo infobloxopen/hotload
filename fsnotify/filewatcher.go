@@ -11,6 +11,7 @@ import (
 
 	rfsnotify "github.com/fsnotify/fsnotify"
 	"github.com/infobloxopen/hotload"
+	"github.com/infobloxopen/hotload/logger"
 	"github.com/pkg/errors"
 )
 
@@ -19,7 +20,6 @@ func init() {
 }
 
 var resyncPeriod = time.Second * 2
-var log = hotload.GetLogger()
 
 // NewStrategy implements a hotload strategy that monitors config changes
 // in a file using fsnotify.
@@ -53,6 +53,7 @@ func readConfigFile(path string) (v []byte, err error) {
 }
 
 func resync(w watcher, pth string) (string, error) {
+	log := logger.GetLogger()
 	log("fsnotify: Path Name-Resync ", pth)
 	err := w.Remove(pth)
 	if err != nil && !errors.Is(err, rfsnotify.ErrNonExistentWatch) {
@@ -66,6 +67,7 @@ func resync(w watcher, pth string) (string, error) {
 }
 
 func (s *Strategy) run() {
+	log := logger.GetLogger()
 	failedPaths := make(map[string]struct{})
 	for {
 		select {
@@ -102,6 +104,7 @@ func (s *Strategy) run() {
 }
 
 func (s *Strategy) setVal(pth string, val string) {
+	log := logger.GetLogger()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.paths[pth]; !ok {
@@ -117,6 +120,7 @@ func (s *Strategy) setVal(pth string, val string) {
 
 // Watch implements the hotload.Strategy interface.
 func (s *Strategy) Watch(ctx context.Context, pth string, options url.Values) (value string, values <-chan string, err error) {
+	log := logger.GetLogger()
 	pth = path.Clean(pth)
 	s.mu.Lock()
 	defer s.mu.Unlock()

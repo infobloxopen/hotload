@@ -77,8 +77,6 @@ var (
 	mu         sync.RWMutex
 	sqlDrivers = make(map[string]*driverInstance)
 	strategies = make(map[string]Strategy)
-
-	log logger.Logger
 )
 
 type driverInstance struct {
@@ -337,16 +335,12 @@ func (h *hdriver) Open(name string) (driver.Conn, error) {
 	return cgroup.Open()
 }
 
+// Deprecated: Use logger.WithLogger() instead, retained for backwards-compatibility only
 func WithLogger(l logger.Logger) {
-	log = l
-	if log == nil {
-		log = logger.DefaultLogger
-	}
+	logger.WithLogger(l)
 }
 
+// Deprecated: Use logger.GetLogger() instead, retained for backwards-compatibility only
 func GetLogger() logger.Logger {
-	if log == nil {
-		return logger.DefaultLogger
-	}
-	return log
+	return logger.GetLogger()
 }
