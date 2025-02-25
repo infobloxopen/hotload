@@ -1,14 +1,16 @@
 package integrationtests
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
-	"io/ioutil"
 	"log"
+	"os"
 	"time"
 
 	"github.com/infobloxopen/hotload"
 	_ "github.com/infobloxopen/hotload/fsnotify"
+	"github.com/infobloxopen/hotload/fsnotify/modtime"
 	"github.com/lib/pq"
 	_ "github.com/lib/pq"
 	. "github.com/onsi/ginkgo"
@@ -22,13 +24,19 @@ const (
 	testSqlSetup    = "CREATE TABLE test (c1 int)"
 )
 
+var (
+	ctx         context.Context
+	cancelCtxFn context.CancelFunc
+	mtm         *modtime.ModTimeMonitor
+)
+
 func init() {
 	// this function call registers the lib/pq postgres driver with hotload
 	hotload.RegisterSQLDriver("postgres", &pq.Driver{})
 }
 
 func setDSN(dsn string, path string) {
-	err := ioutil.WriteFile(path, []byte(dsn), 777)
+	err := os.WriteFile(path, []byte(dsn), 777)
 	if err != nil {
 		Fail("error writing dsn file")
 	}
@@ -80,6 +88,24 @@ var _ = Describe("hotload integration tests", func() {
 
 			break
 		}
+
+		// enable ModTimeMonitor to monitor configPath
+		ctx, cancelCtxFn = context.WithCancel(context.Background())
+		mtm = modtime.NewModTimeMonitor(ctx,
+			// note the check-interval must be shorter than the sleep interval in setDSN()
+			modtime.WithCheckInterval(100*time.Millisecond),
+			modtime.WithLogger(func(args ...any) {
+				log.Println(args...)
+			}),
+		)
+		mtm.AddMonitoredPath(configPath,
+			modtime.WithRefreshInterval(3000*time.Millisecond),
+		)
+	}, 240)
+
+	AfterSuite(func() {
+		cancelCtxFn()
+		time.Sleep(200 * time.Millisecond)
 	}, 240)
 
 	var (
@@ -106,13 +132,29 @@ var _ = Describe("hotload integration tests", func() {
 	})
 
 	It("should connect to new db when file changes", func() {
+		var prevModTime time.Time
 		for i := 0; i < 2; i++ {
+			// Get configPath modtime
+			sts, err := mtm.GetPathStatus(configPath)
+			if err != nil {
+				Fail(fmt.Sprintf("GetPathStatus(%s) err: %v", configPath, err))
+			}
+			log.Println(fmt.Sprintf("GetPathStatus(%s): %v", configPath, sts))
+
+			// Verify configPath modtime was updated after configPath was updated with new DSN
+			if sts.ModTime.After(prevModTime) {
+				prevModTime = sts.ModTime
+			} else {
+				Fail(fmt.Sprintf("%s: new sts.ModTime(%s) <= prevModTime(%s)", configPath, sts.ModTime, prevModTime))
+			}
+
 			r, err := db.Exec(fmt.Sprintf("INSERT INTO test (c1) VALUES (%d)", i))
 			if err != nil {
 				Fail(fmt.Sprintf("error inserting row: %v", err))
 			}
 			log.Print(r)
 
+			// Set new DSN, note that this sleeps for 250 millisecs
 			setDSN(hotloadTest1Dsn, configPath)
 		}
 		expectValueInDb(hltDb, 0)

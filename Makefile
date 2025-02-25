@@ -24,7 +24,9 @@ get-ginkgo:
 	go get github.com/onsi/ginkgo/ginkgo
 
 test: vet get-ginkgo
-	go test -race github.com/infobloxopen/hotload github.com/infobloxopen/hotload/fsnotify
+	go test -race github.com/infobloxopen/hotload \
+	github.com/infobloxopen/hotload/fsnotify \
+	github.com/infobloxopen/hotload/fsnotify/modtime
 
 
 # test target which includes the no-diff fail condition
