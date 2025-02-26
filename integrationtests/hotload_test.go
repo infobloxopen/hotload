@@ -3,8 +3,8 @@ package integrationtests
 import (
 	"database/sql"
 	"fmt"
-	"io/ioutil"
 	"log"
+	"os"
 	"time"
 
 	"github.com/infobloxopen/hotload"
@@ -28,7 +28,7 @@ func init() {
 }
 
 func setDSN(dsn string, path string) {
-	err := ioutil.WriteFile(path, []byte(dsn), 777)
+	err := os.WriteFile(path, []byte(dsn), 777)
 	if err != nil {
 		Fail("error writing dsn file")
 	}
@@ -89,6 +89,7 @@ var _ = Describe("hotload integration tests", func() {
 	)
 
 	BeforeEach(func() {
+		log.Println("BeforeEach")
 		setDSN(hotloadTestDsn, configPath)
 		hltDb = openDb(hotloadTestDsn)
 		hlt1Db = openDb(hotloadTest1Dsn)
@@ -107,6 +108,12 @@ var _ = Describe("hotload integration tests", func() {
 
 	It("should connect to new db when file changes", func() {
 		for i := 0; i < 2; i++ {
+			configDsn, err := os.ReadFile(configPath)
+			if err != nil {
+				Fail(fmt.Sprintf("ReadFile(%s) error opening db: %v", configPath, err))
+			}
+			log.Println(fmt.Sprintf("ReadFile(%s)=`%s`", configPath, string(configDsn)))
+
 			r, err := db.Exec(fmt.Sprintf("INSERT INTO test (c1) VALUES (%d)", i))
 			if err != nil {
 				Fail(fmt.Sprintf("error inserting row: %v", err))
