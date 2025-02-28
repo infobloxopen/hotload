@@ -3,6 +3,8 @@ package hotload
 import (
 	"context"
 	"database/sql/driver"
+
+	"github.com/infobloxopen/hotload/metrics"
 )
 
 // managedTx wraps a sql/driver.Tx so that it can store the context of the
@@ -27,11 +29,11 @@ func (t *managedTx) Rollback() error {
 
 func observeSQLStmtsSummary(ctx context.Context, execStmtsCounter, queryStmtsCounter int) {
 	labels := GetExecLabelsFromContext(ctx)
-	service := labels[GRPCServiceKey]
-	method := labels[GRPCMethodKey]
+	service := labels[metrics.GRPCServiceKey]
+	method := labels[metrics.GRPCMethodKey]
 
-	sqlStmtsSummary.WithLabelValues(service, method, ExecStatement).Observe(float64(execStmtsCounter))
-	sqlStmtsSummary.WithLabelValues(service, method, QueryStatement).Observe(float64(queryStmtsCounter))
+	metrics.SqlStmtsSummary.WithLabelValues(service, method, metrics.ExecStatement).Observe(float64(execStmtsCounter))
+	metrics.SqlStmtsSummary.WithLabelValues(service, method, metrics.QueryStatement).Observe(float64(queryStmtsCounter))
 }
 
 func (t *managedTx) cleanup() {

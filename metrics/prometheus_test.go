@@ -1,4 +1,4 @@
-package hotload
+package metrics
 
 import (
 	"errors"
@@ -11,7 +11,7 @@ import (
 var _ = Describe("PrometheusMetric", func() {
 	It("Should register a prometheus metric", func() {
 		// This test is a placeholder for a real test
-		err := prometheus.Register(sqlStmtsSummary)
+		err := prometheus.Register(SqlStmtsSummary)
 		Expect(err).Should(HaveOccurred())
 		Expect(errors.As(err, &prometheus.AlreadyRegisteredError{})).Should(BeTrue())
 	})

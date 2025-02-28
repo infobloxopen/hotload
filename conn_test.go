@@ -10,6 +10,8 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/infobloxopen/hotload/metrics"
 )
 
 var _ = Describe("managedConn", func() {
@@ -155,7 +157,7 @@ var _ = Describe("PrometheusMetrics", func() {
 		Expect(err).ShouldNot(HaveOccurred())
 
 		// collect and compare metrics
-		err = testutil.CollectAndCompare(sqlStmtsSummary, strings.NewReader(help+service1Metrics))
+		err = testutil.CollectAndCompare(metrics.SqlStmtsSummary, strings.NewReader(help+service1Metrics))
 		Expect(err).ShouldNot(HaveOccurred())
 
 		// reset the metrics
@@ -186,7 +188,7 @@ var _ = Describe("PrometheusMetrics", func() {
 		Expect(err).ShouldNot(HaveOccurred())
 
 		// collect and compare metrics
-		err = testutil.CollectAndCompare(sqlStmtsSummary, strings.NewReader(help+service1Metrics+service2Metrics))
+		err = testutil.CollectAndCompare(metrics.SqlStmtsSummary, strings.NewReader(help+service1Metrics+service2Metrics))
 		Expect(err).ShouldNot(HaveOccurred())
 
 		// rerun with initial metrics
@@ -206,7 +208,7 @@ var _ = Describe("PrometheusMetrics", func() {
 		Expect(err).ShouldNot(HaveOccurred())
 
 		// collect and compare metrics
-		err = testutil.CollectAndCompare(sqlStmtsSummary, strings.NewReader(help+service1RerunMetrics+service2Metrics))
+		err = testutil.CollectAndCompare(metrics.SqlStmtsSummary, strings.NewReader(help+service1RerunMetrics+service2Metrics))
 		Expect(err).ShouldNot(HaveOccurred())
 
 		// non labeled context
@@ -226,11 +228,11 @@ var _ = Describe("PrometheusMetrics", func() {
 		Expect(err).ShouldNot(HaveOccurred())
 
 		// collect and compare metrics
-		err = testutil.CollectAndCompare(sqlStmtsSummary, strings.NewReader(help+noMethodMetrics+service1RerunMetrics+service2Metrics))
+		err = testutil.CollectAndCompare(metrics.SqlStmtsSummary, strings.NewReader(help+noMethodMetrics+service1RerunMetrics+service2Metrics))
 		Expect(err).ShouldNot(HaveOccurred())
 	})
 })
 
 func CollectAndCompareMetrics(r io.Reader) error {
-	return testutil.CollectAndCompare(sqlStmtsSummary, r)
+	return testutil.CollectAndCompare(metrics.SqlStmtsSummary, r)
 }
