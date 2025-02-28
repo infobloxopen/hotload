@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/infobloxopen/hotload/metrics"
 	utilt "github.com/infobloxopen/hotload/util_test"
 )
 
@@ -17,6 +21,8 @@ func TestAgainstUnixFS(t *testing.T) {
 	var zeroTime time.Time
 	ctx, cancelCtxFn := context.WithCancel(context.Background())
 	defer cancelCtxFn()
+
+	metrics.ResetHotloadCollectors()
 
 	// Create ModTimeMonitor that monitors the (default) real host Unix FS
 	mtm := NewModTimeMonitor(ctx,
@@ -61,6 +67,8 @@ func TestAgainstMapFS(t *testing.T) {
 	ctx, cancelCtxFn := context.WithCancel(context.Background())
 	defer cancelCtxFn()
 
+	metrics.ResetHotloadCollectors()
+
 	// Create MapFS mock FS
 	pth := "/foo/bar"
 	mfs := utilt.NewSafeMapFS()
@@ -100,6 +108,16 @@ func TestAgainstMapFS(t *testing.T) {
 			t.Errorf("GetPathStatus(%s): unexpected FailCount=%+v, expected 2", pth, sts.FailCount)
 		}
 	}
+	err = testutil.CollectAndCompare(metrics.HotloadFsnotifyModtimeCheckGauge, strings.NewReader(
+		fmt.Sprintf(metrics.HotloadFsnotifyModtimeCheckGaugeScrapeFmt, pth, 1)))
+	if err != nil {
+		t.Errorf("CollectAndCompare(): unexpected err=%s", err)
+	}
+	err = testutil.CollectAndCompare(metrics.HotloadFsnotifyModtimeFailureCounter, strings.NewReader(
+		fmt.Sprintf(metrics.HotloadFsnotifyModtimeFailureCounterScrapeFmt, pth, 1)))
+	if err != nil {
+		t.Errorf("CollectAndCompare(): unexpected err=%s", err)
+	}
 
 	// Update mock path mod-time
 	mapf, err := mfs.GetMapFile(pth)
@@ -124,6 +142,16 @@ func TestAgainstMapFS(t *testing.T) {
 			t.Errorf("GetPathStatus(%s): unexpected FailCount=%+v, expected 0", pth, sts.FailCount)
 		}
 	}
+	err = testutil.CollectAndCompare(metrics.HotloadFsnotifyModtimeCheckGauge, strings.NewReader(
+		fmt.Sprintf(metrics.HotloadFsnotifyModtimeCheckGaugeScrapeFmt, pth, 0)))
+	if err != nil {
+		t.Errorf("CollectAndCompare(): unexpected err=%s", err)
+	}
+	err = testutil.CollectAndCompare(metrics.HotloadFsnotifyModtimeFailureCounter, strings.NewReader(
+		fmt.Sprintf(metrics.HotloadFsnotifyModtimeFailureCounterScrapeFmt, pth, 1)))
+	if err != nil {
+		t.Errorf("CollectAndCompare(): unexpected err=%s", err)
+	}
 
 	// Give time for ModTimeMonitor background thread to check mod-times.
 	// Wait 1 cycle of checks.
@@ -140,6 +168,16 @@ func TestAgainstMapFS(t *testing.T) {
 			t.Errorf("GetPathStatus(%s): unexpected FailCount=%+v, expected 1", pth, sts.FailCount)
 		}
 	}
+	err = testutil.CollectAndCompare(metrics.HotloadFsnotifyModtimeCheckGauge, strings.NewReader(
+		fmt.Sprintf(metrics.HotloadFsnotifyModtimeCheckGaugeScrapeFmt, pth, 1)))
+	if err != nil {
+		t.Errorf("CollectAndCompare(): unexpected err=%s", err)
+	}
+	err = testutil.CollectAndCompare(metrics.HotloadFsnotifyModtimeFailureCounter, strings.NewReader(
+		fmt.Sprintf(metrics.HotloadFsnotifyModtimeFailureCounterScrapeFmt, pth, 2)))
+	if err != nil {
+		t.Errorf("CollectAndCompare(): unexpected err=%s", err)
+	}
 
 	// Cancel ctx and give time for background threads to terminate
 	cancelCtxFn()
@@ -153,6 +191,8 @@ func TestConcurrency(t *testing.T) {
 	var zeroTime time.Time
 	ctx, cancelCtxFn := context.WithCancel(context.Background())
 	defer cancelCtxFn()
+
+	metrics.ResetHotloadCollectors()
 
 	commonIntv := time.Millisecond * 100
 

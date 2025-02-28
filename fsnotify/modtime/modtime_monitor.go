@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/infobloxopen/hotload/logger"
+	"github.com/infobloxopen/hotload/metrics"
 )
 
 var (
@@ -135,8 +136,15 @@ func (mtm *ModTimeMonitor) checkPathModTimes(ctx context.Context, nowTime time.T
 		}
 
 		if nowTime.Sub(pathRec.modTime.Load().(time.Time)) > pathRec.refreshIntv {
+			if pathRec.failCount.Load() <= 0 {
+				metrics.SetHotloadFsnotifyModtimeCheckGauge(pathStr, 1)
+				metrics.IncHotloadFsnotifyModtimeFailureCounter(pathStr)
+			}
 			pathRec.failCount.Add(1)
 		} else {
+			if pathRec.failCount.Load() > 0 {
+				metrics.SetHotloadFsnotifyModtimeCheckGauge(pathStr, 0)
+			}
 			pathRec.failCount.Store(0)
 		}
 	}
