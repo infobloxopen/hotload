@@ -42,7 +42,8 @@ func (t *managedTx) cleanup() {
 	t.conn.resetQueryStmtsCounter()
 }
 
-var promLabelKey = struct{}{}
+type LabelKey string
+var promLabelKey = LabelKey("hotloadLabels")
 
 func ContextWithExecLabels(ctx context.Context, labels map[string]string) context.Context {
 	return context.WithValue(ctx, promLabelKey, labels)
