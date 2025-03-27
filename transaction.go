@@ -42,10 +42,14 @@ func (t *managedTx) cleanup() {
 	t.conn.resetQueryStmtsCounter()
 }
 
-type LabelKey string
-var promLabelKey = LabelKey("hotloadLabels")
+type promLabelKeyType struct{}
+var promLabelKey = promLabelKeyType{}
 
 func ContextWithExecLabels(ctx context.Context, labels map[string]string) context.Context {
+        if labels == nil {
+		log.Warn("ContextWithExecLabels called with nil label set")
+		return ctx
+	}
 	return context.WithValue(ctx, promLabelKey, labels)
 }
 
@@ -54,9 +58,15 @@ func GetExecLabelsFromContext(ctx context.Context) map[string]string {
 		return nil
 	}
 
-	if ctx.Value(promLabelKey) == nil {
+	value := ctx.Value(promLabelKey)
+	if value == nil {
+		return nil
+	}
+	labelMap, ok := v.(map[string]string)
+	if !ok {
+		log.Error("Bad value type used for promLabelKey, conversion error")
 		return nil
 	}
 
-	return ctx.Value(promLabelKey).(map[string]string)
+	return labelMap
 }
