@@ -29,6 +29,10 @@ func (t *managedTx) Rollback() error {
 
 func observeSQLStmtsSummary(ctx context.Context, execStmtsCounter, queryStmtsCounter int) {
 	labels := GetExecLabelsFromContext(ctx)
+	if labels == nil{
+		// TODO: Add defaults and remove return
+		return
+	}
 	service := labels[metrics.GRPCServiceKey]
 	method := labels[metrics.GRPCMethodKey]
 
