@@ -29,7 +29,7 @@ func (t *managedTx) Rollback() error {
 
 func observeSQLStmtsSummary(ctx context.Context, execStmtsCounter, queryStmtsCounter int) {
 	labels := GetExecLabelsFromContext(ctx)
-	if labels == nil{
+	if labels == nil {
 		// TODO: Add defaults and remove return
 		return
 	}
