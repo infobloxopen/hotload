@@ -43,11 +43,12 @@ func (t *managedTx) cleanup() {
 }
 
 type promLabelKeyType struct{}
+
 var promLabelKey = promLabelKeyType{}
 
 func ContextWithExecLabels(ctx context.Context, labels map[string]string) context.Context {
-        if labels == nil {
-		log.Warn("ContextWithExecLabels called with nil label set")
+	if labels == nil {
+		// ContextWithExecLabels called with nil label set
 		return ctx
 	}
 	return context.WithValue(ctx, promLabelKey, labels)
@@ -62,9 +63,9 @@ func GetExecLabelsFromContext(ctx context.Context) map[string]string {
 	if value == nil {
 		return nil
 	}
-	labelMap, ok := v.(map[string]string)
+	labelMap, ok := value.(map[string]string)
 	if !ok {
-		log.Error("Bad value type used for promLabelKey, conversion error")
+		// Bad value type used for promLabelKey, conversion error
 		return nil
 	}
 
