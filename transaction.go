@@ -4,10 +4,9 @@ import (
 	"context"
 	"database/sql/driver"
 
-	"github.com/infobloxopen/hotload/metrics"
 	"github.com/infobloxopen/hotload/logger"
+	"github.com/infobloxopen/hotload/metrics"
 )
-
 
 // managedTx wraps a sql/driver.Tx so that it can store the context of the
 // transaction and clean up the execqueryCallsCounter on Commit or Rollback.
@@ -49,7 +48,7 @@ type promLabelKeyType struct{}
 var promLabelKey = promLabelKeyType{}
 
 func ContextWithExecLabels(ctx context.Context, labels map[string]string) context.Context {
-	var log = logger.getLogger()
+	var log = logger.GetLogger()
 	if labels == nil {
 		log("ContextWithExecLabels called with nil label set")
 		return ctx
@@ -58,7 +57,7 @@ func ContextWithExecLabels(ctx context.Context, labels map[string]string) contex
 }
 
 func GetExecLabelsFromContext(ctx context.Context) map[string]string {
-	var log = logger.getLogger()
+	var log = logger.GetLogger()
 	if ctx == nil {
 		log("No context provided, returning")
 		return nil
