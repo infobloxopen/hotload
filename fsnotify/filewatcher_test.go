@@ -8,8 +8,7 @@ import (
 	"time"
 
 	rfsnotify "github.com/fsnotify/fsnotify"
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/ginkgo/extensions/table"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
@@ -17,7 +16,7 @@ func assertStringFromChannel(name string, want string, from <-chan string) {
 	select {
 	case got := <-from:
 		if got != want {
-			Fail(fmt.Sprintf("%s: expected %v got %v", name, want, got))
+			Fail(fmt.Sprintf("%s: expected '%v' got '%v'", name, want, got))
 		}
 	case <-time.After(resyncPeriod * 2):
 		Fail(fmt.Sprintf("%s: timeout", name))
@@ -160,7 +159,7 @@ var _ = Describe("FileWatcher", func() {
 					return fmt.Errorf("expected 'a' got %v", value)
 				}
 				os.WriteFile(args.pth, []byte("b"), 0660)
-				assertStringFromChannel("wating for update b", "b", values)
+				assertStringFromChannel("waiting for update b", "b", values)
 				return nil
 			},
 			tearDown: func(args *args) {
@@ -180,7 +179,7 @@ var _ = Describe("FileWatcher", func() {
 					return fmt.Errorf("expected 'a' got %v", value)
 				}
 				os.WriteFile(args.pth, []byte("b"), 0660)
-				assertStringFromChannel("wating for update b", "b", values)
+				assertStringFromChannel("waiting for update b", "b", values)
 				return nil
 			},
 			tearDown: func(args *args) {
@@ -211,7 +210,7 @@ var _ = Describe("FileWatcher", func() {
 
 				Expect(err).ToNot(HaveOccurred(), "creating new file")
 
-				assertStringFromChannel("wating for create b", "b", values)
+				assertStringFromChannel("waiting for create b", "b", values)
 				return nil
 			},
 			tearDown: func(args *args) {

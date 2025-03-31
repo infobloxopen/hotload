@@ -21,7 +21,7 @@ build: vet
 	go build ./...
 
 get-ginkgo:
-	go get github.com/onsi/ginkgo/ginkgo
+	go get github.com/onsi/ginkgo/v2/ginkgo
 
 test: vet get-ginkgo
 	go test -race github.com/infobloxopen/hotload \

@@ -13,7 +13,7 @@ import (
 	"github.com/infobloxopen/hotload/modtime"
 	"github.com/lib/pq"
 	_ "github.com/lib/pq"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
@@ -26,9 +26,9 @@ const (
 )
 
 var (
-	ctx         context.Context
-	cancelCtxFn context.CancelFunc
-	mtm         *modtime.ModTimeMonitor
+	mtmCtx         context.Context
+	mtmCancelCtxFn context.CancelFunc
+	mtm            *modtime.ModTimeMonitor
 )
 
 func init() {
@@ -43,6 +43,8 @@ func setDSN(dsn string, path string) {
 	}
 	// Yield thread to let switch over take place
 	time.Sleep(250 * time.Millisecond)
+
+	log.Printf("setDSN success writing '%s' to '%s'", dsn, path)
 }
 
 // Open a db or die
@@ -66,54 +68,58 @@ func expectValueInDb(db *sql.DB, expected int64) {
 	Expect(c1).To(Equal(expected))
 }
 
-var _ = Describe("hotload integration tests", func() {
-	BeforeSuite(func() {
-		// create tables and chairs
-		hlt, err := sql.Open("postgres", hotloadTestDsn)
-		hlt1, err := sql.Open("postgres", hotloadTest1Dsn)
+var _ = BeforeSuite(func(ctx context.Context) {
+	// create tables and chairs
+	hlt, err := sql.Open("postgres", hotloadTestDsn)
+	hlt1, err := sql.Open("postgres", hotloadTest1Dsn)
 
-		for {
-			time.Sleep(5 * time.Second)
-			_, err = hlt.Exec(testSqlSetup)
-			if err != nil {
-				log.Printf("error creating test table in hlt: %v", err)
-				continue
-				//Fail(fmt.Sprintf()
-			}
-
-			_, err = hlt1.Exec(testSqlSetup)
-			if err != nil {
-				log.Printf("error creating test table in hlt1: %v", err)
-				continue
-			}
-
-			break
+	for {
+		time.Sleep(5 * time.Second)
+		_, err = hlt.Exec(testSqlSetup)
+		if err != nil {
+			log.Printf("error creating test table in hlt: %v", err)
+			continue
+			//Fail(fmt.Sprintf())
 		}
 
-		// enable ModTimeMonitor to monitor configPath
-		ctx, cancelCtxFn = context.WithCancel(context.Background())
-		mtm = modtime.NewModTimeMonitor(ctx,
-			// note the check-interval must be shorter than the sleep interval in setDSN()
-			modtime.WithCheckInterval(100*time.Millisecond),
-			modtime.WithLogger(func(args ...any) {
-				log.Println(args...)
-			}),
-		)
-		mtm.AddMonitoredPath(fsnotifyStrategy, configPath)
-	}, 240)
+		_, err = hlt1.Exec(testSqlSetup)
+		if err != nil {
+			log.Printf("error creating test table in hlt1: %v", err)
+			continue
+		}
 
-	AfterSuite(func() {
-		cancelCtxFn()
-		time.Sleep(200 * time.Millisecond)
-	}, 240)
+		break
+	}
 
+	// enable ModTimeMonitor to monitor configPath
+	// (do NOT use the ginkgo supplied ctx parm,
+	// as it will be canceled when BeforeSuite finishes)
+	mtmCtx, mtmCancelCtxFn = context.WithCancel(context.Background())
+	mtm = modtime.NewModTimeMonitor(mtmCtx,
+		// note the check-interval must be shorter than the sleep interval in setDSN()
+		modtime.WithCheckInterval(100*time.Millisecond),
+		modtime.WithLogger(func(args ...any) {
+			log.Println(args...)
+		}),
+	)
+	mtm.AddMonitoredPath(fsnotifyStrategy, configPath)
+	time.Sleep(200 * time.Millisecond)
+}, NodeTimeout(240*time.Second))
+
+var _ = AfterSuite(func(ctx context.Context) {
+	log.Printf("AfterSuite canceling ModTimeMonitor context")
+	mtmCancelCtxFn()
+	time.Sleep(200 * time.Millisecond)
+}, NodeTimeout(240*time.Second))
+
+var _ = Describe("hotload integration tests", func() {
 	var (
 		db     *sql.DB
 		hltDb  *sql.DB
 		hlt1Db *sql.DB
 	)
 
-	BeforeEach(func() {
+	BeforeEach(func(ctx context.Context) {
 		setDSN(hotloadTestDsn, configPath)
 		hltDb = openDb(hotloadTestDsn)
 		hlt1Db = openDb(hotloadTest1Dsn)
@@ -130,7 +136,7 @@ var _ = Describe("hotload integration tests", func() {
 		}
 	})
 
-	It("should connect to new db when file changes", func() {
+	It("should connect to new db when file changes", func(ctx context.Context) {
 		var prevModTime time.Time
 		for i := 0; i < 2; i++ {
 			// Get configPath modtime
