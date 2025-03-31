@@ -5,7 +5,7 @@ import (
 	"database/sql/driver"
 
 	"github.com/infobloxopen/hotload/metrics"
-	"github.com/infobloxopen/hotload/logging"
+	"github.com/infobloxopen/hotload/logger"
 )
 
 
@@ -49,7 +49,7 @@ type promLabelKeyType struct{}
 var promLabelKey = promLabelKeyType{}
 
 func ContextWithExecLabels(ctx context.Context, labels map[string]string) context.Context {
-	var log = logging.getLogger()
+	var log = logger.getLogger()
 	if labels == nil {
 		log("ContextWithExecLabels called with nil label set")
 		return ctx
@@ -58,7 +58,7 @@ func ContextWithExecLabels(ctx context.Context, labels map[string]string) contex
 }
 
 func GetExecLabelsFromContext(ctx context.Context) map[string]string {
-	var log = logging.getLogger()
+	var log = logger.getLogger()
 	if ctx == nil {
 		log("No context provided, returning")
 		return nil
