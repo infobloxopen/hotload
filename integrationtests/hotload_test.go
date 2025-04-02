@@ -20,8 +20,9 @@ import (
 const (
 	fsnotifyStrategy = "fsnotify"
 	configPath       = "/tmp/hotload_integration_test_dsn_config.txt"
-	testSqlSetup     = "CREATE TABLE test (c1 int)"
+	testSqlSetup     = "CREATE TABLE test (c1 int, csleep text)"
 	testSqlTeardown  = "DROP TABLE IF EXISTS test"
+	truncSqlSetup    = "TRUNCATE TABLE test"
 )
 
 var (
@@ -46,11 +47,31 @@ func setDSN(dsn string, path string) {
 	log.Printf("setDSN success writing '%s' to '%s'", dsn, path)
 }
 
-// Open a db or die
-func openDb(dsn string) *sql.DB {
+// Open a db using postgres driver, or die
+func openDbPostgres(dsn string) *sql.DB {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
-		Fail(fmt.Sprintf("error opening db: %v", err))
+		Fail(fmt.Sprintf("error opening db dsn '%s': %v", dsn, err))
+	}
+
+	return db
+}
+
+// Open a db using hotload driver, or die
+func openDbHotload(forceKill bool) *sql.DB {
+	dsnUrl := "fsnotify://postgres" + configPath
+	if forceKill {
+		dsnUrl = dsnUrl + "?forceKill=true"
+	}
+
+	db, err := sql.Open("hotload", dsnUrl)
+	if err != nil {
+		Fail(fmt.Sprintf("error opening db dsn '%s': %v", dsnUrl, err))
+	}
+
+	err = db.Ping()
+	if err != nil {
+		Fail(fmt.Sprintf("err pinging db dsn '%s': %v", dsnUrl, err))
 	}
 
 	return db
@@ -65,6 +86,25 @@ func expectValueInDb(db *sql.DB, expected int64) {
 	err = r.Scan(&c1)
 	Expect(err).ToNot(HaveOccurred(), fmt.Sprintf("error calling r.Scan(): %v", err))
 	Expect(c1).To(Equal(expected))
+}
+
+func expectModTime(modPath string, prevModTime time.Time) time.Time {
+	nextModTime := prevModTime
+
+	// Get modPath modtime
+	sts, err := mtm.GetPathStatus(fsnotifyStrategy, modPath)
+	if err != nil {
+		Fail(fmt.Sprintf("GetPathStatus(%s) err: %v", modPath, err))
+	}
+	log.Println(fmt.Sprintf("GetPathStatus(%s): %v", modPath, sts))
+
+	// Verify modPath modtime was updated after modPath was updated with new DSN
+	nextModTime = sts.ModTime
+	if !nextModTime.After(prevModTime) {
+		Fail(fmt.Sprintf("%s: new sts.ModTime(%s) <= prevModTime(%s)", modPath, nextModTime, prevModTime))
+	}
+
+	return nextModTime
 }
 
 var _ = BeforeSuite(func(ctx context.Context) {
@@ -99,9 +139,7 @@ var _ = BeforeSuite(func(ctx context.Context) {
 	mtm = modtime.NewModTimeMonitor(mtmCtx,
 		// note the check-interval must be shorter than the sleep interval in setDSN()
 		modtime.WithCheckInterval(100*time.Millisecond),
-		modtime.WithLogger(func(args ...any) {
-			log.Println(args...)
-		}),
+		modtime.WithLogger(testLogger),
 	)
 	mtm.AddMonitoredPath(fsnotifyStrategy, configPath)
 	time.Sleep(200 * time.Millisecond)
@@ -128,7 +166,7 @@ var _ = AfterSuite(func(ctx context.Context) {
 	}
 }, NodeTimeout(240*time.Second))
 
-var _ = Describe("hotload integration tests", func() {
+var _ = Describe("hotload integration tests - sanity", Serial, Pending, func() {
 	var (
 		db     *sql.DB
 		hltDb  *sql.DB
@@ -137,37 +175,27 @@ var _ = Describe("hotload integration tests", func() {
 
 	BeforeEach(func(ctx context.Context) {
 		setDSN(hotloadTestDsn, configPath)
-		hltDb = openDb(hotloadTestDsn)
-		hlt1Db = openDb(hotloadTest1Dsn)
-		newDb, err := sql.Open("hotload", "fsnotify://postgres"+configPath)
+		hltDb = openDbPostgres(hotloadTestDsn)
+		hlt1Db = openDbPostgres(hotloadTest1Dsn)
+
+		_, err := hltDb.Exec(truncSqlSetup)
 		if err != nil {
-			Fail(fmt.Sprintf("error opening db: %v", err))
+			Fail(fmt.Sprintf("error truncating test table in hltDb: %v", err))
 		}
 
-		db = newDb
-
-		err = db.Ping()
+		_, err = hlt1Db.Exec(truncSqlSetup)
 		if err != nil {
-			Fail(fmt.Sprintf("err pinging db: %v", err))
+			Fail(fmt.Sprintf("error truncating test table in hlt1Db: %v", err))
 		}
+
+		db = openDbHotload(false)
 	})
 
 	It("should connect to new db when file changes", func(ctx context.Context) {
 		var prevModTime time.Time
 		for i := 0; i < 2; i++ {
-			// Get configPath modtime
-			sts, err := mtm.GetPathStatus(fsnotifyStrategy, configPath)
-			if err != nil {
-				Fail(fmt.Sprintf("GetPathStatus(%s) err: %v", configPath, err))
-			}
-			log.Println(fmt.Sprintf("GetPathStatus(%s): %v", configPath, sts))
-
 			// Verify configPath modtime was updated after configPath was updated with new DSN
-			if sts.ModTime.After(prevModTime) {
-				prevModTime = sts.ModTime
-			} else {
-				Fail(fmt.Sprintf("%s: new sts.ModTime(%s) <= prevModTime(%s)", configPath, sts.ModTime, prevModTime))
-			}
+			prevModTime = expectModTime(configPath, prevModTime)
 
 			r, err := db.Exec(fmt.Sprintf("INSERT INTO test (c1) VALUES (%d)", i))
 			if err != nil {

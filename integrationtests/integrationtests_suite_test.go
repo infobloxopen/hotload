@@ -2,10 +2,12 @@ package integrationtests
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/infobloxopen/hotload/logger"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -15,7 +17,14 @@ var (
 	hotloadTest1Dsn string
 )
 
+func testLogger(args ...any) {
+	log.Println(args...)
+}
+
 func TestIntegrationtests(t *testing.T) {
+	log.SetOutput(GinkgoWriter)
+	logger.WithLogger(testLogger)
+
 	pgUser := "admin"
 	pgPass := "test"
 	pgPort := "5432"
