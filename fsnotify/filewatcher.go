@@ -72,8 +72,8 @@ func (s *Strategy) run() {
 	for {
 		select {
 		case e := <-s.watcher.GetEvents():
-			log("fsnotify: Path Name-Run ", e.Name)
-			if e.Op != rfsnotify.Write && e.Op != rfsnotify.Remove {
+			log("fsnotify: Path Name-Run: got event: ", e.String())
+			if !e.Has(rfsnotify.Write) && !e.Has(rfsnotify.Remove) {
 				continue
 			}
 
