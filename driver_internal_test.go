@@ -60,7 +60,7 @@ func TestRegisterSQLDriverWithOptions(t *testing.T) {
 	}
 }
 
-func Test_mergeConnectionStringOptions(t *testing.T) {
+func Test_mergeConnStringOptions(t *testing.T) {
 	type args struct {
 		dsn     string
 		options map[string]string
@@ -118,13 +118,13 @@ func Test_mergeConnectionStringOptions(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := mergeConnectionStringOptions(tt.args.dsn, tt.args.options)
+			got, err := mergeConnStringOptions(tt.args.dsn, tt.args.options)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("mergeConnectionStringOptions() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("mergeConnStringOptions() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if got != tt.want {
-				t.Errorf("mergeConnectionStringOptions() = %v, want %v", got, tt.want)
+				t.Errorf("mergeConnStringOptions() = %v, want %v", got, tt.want)
 			}
 		})
 	}

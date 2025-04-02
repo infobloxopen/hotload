@@ -1,5 +1,7 @@
 package logger
 
+import "fmt"
+
 // Logger defines the interface for logging.
 type Logger func(...interface{})
 
@@ -23,4 +25,10 @@ func GetLogger() Logger {
 		return DefaultLogger
 	}
 	return stdLogger
+}
+
+func Logf(prefix, format string, args ...any) {
+	loggr := GetLogger()
+	logMsg := fmt.Sprintf(format, args...)
+	loggr(prefix, logMsg)
 }

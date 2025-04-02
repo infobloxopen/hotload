@@ -5,17 +5,22 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"sync"
+
+	"github.com/infobloxopen/hotload/logger"
 )
 
 // managedConn wraps a sql/driver.Conn so that it can be closed by
 // a supervising context.
 type managedConn struct {
-	ctx    context.Context
-	conn   driver.Conn
-	reset  bool
-	killed bool
-	mu     sync.RWMutex
+	ctx       context.Context
+	dsn       string
+	redactDsn string
+	conn      driver.Conn
+	reset     bool
+	killed    bool
+	mu        sync.RWMutex
 
 	// callback function to be called after the connection is closed
 	afterClose func(*managedConn)
@@ -70,9 +75,11 @@ func (c *managedConn) BeginTx(ctx context.Context, opts driver.TxOptions) (drive
 	return tx, err
 }
 
-func newManagedConn(ctx context.Context, conn driver.Conn, afterClose func(*managedConn)) *managedConn {
+func newManagedConn(ctx context.Context, dsn, redactDsn string, conn driver.Conn, afterClose func(*managedConn)) *managedConn {
 	return &managedConn{
 		ctx:        ctx,
+		dsn:        dsn,
+		redactDsn:  redactDsn,
 		conn:       conn,
 		afterClose: afterClose,
 	}
@@ -179,6 +186,7 @@ func (c *managedConn) Close() error {
 	if err == nil {
 		c.killed = true
 	}
+	c.logf("managedConn", "closed")
 
 	return err
 }
@@ -200,6 +208,7 @@ func (c *managedConn) Reset(v bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.reset = v
+	c.logf("managedConn.Reset", "reset=%v", v)
 }
 
 func (c *managedConn) GetKill() bool {
@@ -230,4 +239,9 @@ func (c *managedConn) resetQueryStmtsCounter() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.queryStmtsCounter = 0
+}
+
+func (c *managedConn) logf(prefix, format string, args ...any) {
+	logPrefix := fmt.Sprintf("%s[%s]:", prefix, c.redactDsn)
+	logger.Logf(logPrefix, format, args...)
 }

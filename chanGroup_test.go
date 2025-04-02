@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/infobloxopen/hotload/logger"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -66,30 +65,29 @@ var _ = DescribeTableSubtree("Driver", Serial, func(forceKill bool) {
 			ctx, cancel = context.WithCancel(pctx)
 			mockw = newMockWatcher()
 			cg = &chanGroup{
-				value:     "1st-dsn",
-				values:    mockw.getReceiveChan(),
-				parentCtx: pctx,
-				ctx:       ctx,
-				cancel:    cancel,
-				sqlDriver: nil,
-				mu:        sync.RWMutex{},
-				forceKill: forceKill,
-				log:       logger.GetLogger(),
+				value:      "1st-dsn",
+				newValChan: mockw.getReceiveChan(),
+				parentCtx:  pctx,
+				ctx:        ctx,
+				cancel:     cancel,
+				sqlDriver:  nil,
+				mu:         sync.RWMutex{},
+				forceKill:  forceKill,
 			}
 			cg.conns = []*managedConn{
-				newManagedConn(ctx, &testConn{}, cg.remove),
-				newManagedConn(ctx, &testConn{}, cg.remove),
-				newManagedConn(ctx, &testConn{}, cg.remove),
+				newManagedConn(ctx, cg.value, cg.value, &testConn{}, cg.removeMgdConn),
+				newManagedConn(ctx, cg.value, cg.value, &testConn{}, cg.removeMgdConn),
+				newManagedConn(ctx, cg.value, cg.value, &testConn{}, cg.removeMgdConn),
 			}
 			mgdConns = cg.conns
 		}, NodeTimeout(5*time.Second))
 
 		It("Should change value when a value is pushed to the values channel", func(ginkgoCtx context.Context) {
 			newVal := "2nd-dsn"
-			go cg.run()
+			go cg.runLoop()
 			mockw.sendValue(newVal)
 
-			// Yield to cg.run() background thread
+			// Yield to cg.runLoop() background thread
 			time.Sleep(200 * time.Millisecond)
 
 			cg.mu.RLock()
@@ -109,10 +107,10 @@ var _ = DescribeTableSubtree("Driver", Serial, func(forceKill bool) {
 
 		It("Should not reset conns when the same value is pushed to the values channel", func(ginkgoCtx context.Context) {
 			sameVal := "1st-dsn"
-			go cg.run()
+			go cg.runLoop()
 			mockw.sendValue(sameVal)
 
-			// Yield to cg.run() background thread
+			// Yield to cg.runLoop() background thread
 			time.Sleep(200 * time.Millisecond)
 
 			Expect(cg.value).To(Equal(sameVal))
@@ -134,7 +132,7 @@ var _ = DescribeTableSubtree("Driver", Serial, func(forceKill bool) {
 
 		It("Should change value and reset connections", func(ginkgoCtx context.Context) {
 			newVal := "2nd-dsn"
-			cg.valueChanged(newVal)
+			cg.processNewValue(newVal)
 			Expect(cg.value).To(Equal(newVal))
 
 			Expect(len(cg.conns)).To(Equal(0), "number of managed conns should be reset to zero")
