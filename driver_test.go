@@ -8,7 +8,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/infobloxopen/hotload"
 	"github.com/infobloxopen/hotload/fsnotify"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
@@ -27,23 +27,23 @@ var mockDriver sqlmock.Sqlmock
 var configFile string
 var configFileDir string
 
+var _ = BeforeSuite(func() {
+	driver := getDriverFromSqlMock()
+
+	if driver == nil {
+		Fail("driver is nil, boo!")
+	}
+
+	hotload.RegisterSQLDriver("sqlmock", driver)
+	Expect(hotload.SQLDrivers()).To(ContainElement("sqlmock"))
+	var err error
+	configFile, err = os.Getwd()
+	Expect(err).ToNot(HaveOccurred())
+	configFileDir = configFile + "/testdata/"
+	configFile += "/testdata/myconfig.txt"
+})
+
 var _ = Describe("Driver", func() {
-	BeforeSuite(func() {
-		driver := getDriverFromSqlMock()
-
-		if driver == nil {
-			Fail("driver is nil, boo!")
-		}
-
-		hotload.RegisterSQLDriver("sqlmock", driver)
-		Expect(hotload.SQLDrivers()).To(ContainElement("sqlmock"))
-		var err error
-		configFile, err = os.Getwd()
-		Expect(err).ToNot(HaveOccurred())
-		configFileDir = configFile + "/testdata/"
-		configFile += "/testdata/myconfig.txt"
-	})
-
 	Context("RegisterSQLDriver", func() {
 		It("Should panic when registering the same driver twice", func() {
 			driver := getRandomDriver()
