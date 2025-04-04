@@ -12,4 +12,7 @@ spec:
       image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
       imagePullPolicy: Never
       command: ["./integrationtests.test"]
+      env:
+        - name: HOTLOAD_INTEGRATION_TEST_POSTGRES_HOST
+          value: hotload-integration-tests-postgresql.default.svc.cluster.local
   restartPolicy: Never

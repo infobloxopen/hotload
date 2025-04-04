@@ -19,10 +19,9 @@ import (
 
 const (
 	fsnotifyStrategy = "fsnotify"
-	configPath       = "/var/config.txt"
-	hotloadTestDsn   = "postgresql://admin:test@hotload-integration-tests-postgresql.default.svc.cluster.local:5432/hotload_test?sslmode=disable"
-	hotloadTest1Dsn  = "postgresql://admin:test@hotload-integration-tests-postgresql.default.svc.cluster.local:5432/hotload_test1?sslmode=disable"
+	configPath       = "/tmp/hotload_integration_test_dsn_config.txt"
 	testSqlSetup     = "CREATE TABLE test (c1 int)"
+	testSqlTeardown  = "DROP TABLE IF EXISTS test"
 )
 
 var (
@@ -37,9 +36,9 @@ func init() {
 }
 
 func setDSN(dsn string, path string) {
-	err := os.WriteFile(path, []byte(dsn), 777)
+	err := os.WriteFile(path, []byte(dsn), 0777)
 	if err != nil {
-		Fail("error writing dsn file")
+		Fail(fmt.Sprintf("error writing dsn file: %v", err))
 	}
 	// Yield thread to let switch over take place
 	time.Sleep(250 * time.Millisecond)
@@ -72,6 +71,8 @@ var _ = BeforeSuite(func(ctx context.Context) {
 	// create tables and chairs
 	hlt, err := sql.Open("postgres", hotloadTestDsn)
 	hlt1, err := sql.Open("postgres", hotloadTest1Dsn)
+	defer hlt.Close()
+	defer hlt1.Close()
 
 	for {
 		time.Sleep(5 * time.Second)
@@ -110,6 +111,21 @@ var _ = AfterSuite(func(ctx context.Context) {
 	log.Printf("AfterSuite canceling ModTimeMonitor context")
 	mtmCancelCtxFn()
 	time.Sleep(200 * time.Millisecond)
+
+	hlt, err := sql.Open("postgres", hotloadTestDsn)
+	hlt1, err := sql.Open("postgres", hotloadTest1Dsn)
+	defer hlt.Close()
+	defer hlt1.Close()
+
+	_, err = hlt.Exec(testSqlTeardown)
+	if err != nil {
+		log.Printf("error dropping test table in hlt: %v", err)
+	}
+
+	_, err = hlt1.Exec(testSqlTeardown)
+	if err != nil {
+		log.Printf("error dropping test table in hlt1: %v", err)
+	}
 }, NodeTimeout(240*time.Second))
 
 var _ = Describe("hotload integration tests", func() {

@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16.8
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=test
+      - POSTGRES_DB=hldatabase
+    ports:
+      - '5432:5432'
+    volumes: 
+      # https://github.com/felipewom/docker-compose-postgres
+      # https://geshan.com.np/blog/2021/12/docker-postgres/
+      # https://github.com/docker-library/docs/tree/master/postgres#initialization-scripts
+      - ./create_test_tables.sql:/docker-entrypoint-initdb.d/create_test_tables.sql
