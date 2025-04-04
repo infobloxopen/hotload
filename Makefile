@@ -64,3 +64,9 @@ delete-all:
 	helm uninstall hotload-integration-tests || true
 	kubectl delete pvc --all || true
 	kubectl delete pods --all || true
+
+postgres-docker-compose-up:
+	cd integrationtests/docker; docker compose up
+
+postgres-docker-compose-down:
+	cd integrationtests/docker; docker compose down

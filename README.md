@@ -94,3 +94,13 @@ For example:
 ```
 db, err := sql.Open("hotload", "fsnotify://postgres/tmp/myconfig.txt?forceKill=true")
 ```
+
+# How To Run Integration Tests Locally
+```
+$ make postgres-docker-compose-up
+$ cd integrationstests
+$ go test -v -race
+$ vi ...
+$ go test -v -race # this can be repeated  in your edit-run-test cycle
+$ make postgres-docker-compose-down
+```
