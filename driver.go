@@ -213,16 +213,33 @@ func (cg *chanGroup) run() {
 
 func (cg *chanGroup) valueChanged(v string) {
 	cg.mu.Lock()
-	defer cg.mu.Unlock()
-	cg.cancel()
+
+	// Prepare shallow copy of existing connections,
+	// and reset new connections to zero
+	prevConns := cg.conns
+	cg.conns = make([]*managedConn, 0)
+
+	// Prepare copy of existing cancel ctx fn,
+	// and reset to new cancelable ctx
+	prevCancel := cg.cancel
 	cg.ctx, cg.cancel = context.WithCancel(cg.parentCtx)
-	cg.resetConnections()
 
 	cg.value = v
-}
 
-func (cg *chanGroup) resetConnections() {
-	for _, c := range cg.conns {
+	// End critical-section, we MUST unlock mutex before continuing
+	cg.mu.Unlock()
+
+	// Canceling previous ctx can potentially cause other threads
+	// to call managedConn.Close(), which calls managedConn.afterClose(),
+	// which calls chanGroup.remove(), which tries to lock mutex.
+	prevCancel()
+
+	// Reset previous connections
+	// Mutex MUST NOT be held by this point, because in the same thread,
+	// we will call managedConn.Close() if forceKill is true,
+	// which calls managedConn.afterClose(), which calls chanGroup.remove(),
+	// which tries to lock mutex.
+	for _, c := range prevConns {
 		c.Reset(true)
 
 		if cg.forceKill {
@@ -230,8 +247,6 @@ func (cg *chanGroup) resetConnections() {
 			c.Close()
 		}
 	}
-
-	cg.conns = make([]*managedConn, 0)
 }
 
 func mergeConnectionStringOptions(dsn string, options map[string]string) (string, error) {
