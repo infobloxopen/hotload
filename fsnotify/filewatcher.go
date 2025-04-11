@@ -2,6 +2,7 @@ package fsnotify
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"os"
 	"path"
@@ -79,19 +80,23 @@ func (s *Strategy) run() {
 
 			val, err := resync(s.watcher, e.Name)
 			if err != nil {
+				log(fmt.Sprintf("fsnotify: watcher resync (%s) err: %v", e.Name, err))
 				failedPaths[e.Name] = struct{}{}
 				break
 			}
 
 			s.setVal(e.Name, val)
 		case e := <-s.watcher.GetErrors():
-			log("got error: ", e)
+			log("fsnotify: watcher got error: ", e)
 			break
 		case <-time.After(resyncPeriod):
+			log("fsnotify: resyncPeriod timedout")
 			var fixedPaths []string
 			for pth := range failedPaths {
 				val, err := resync(s.watcher, pth)
-				if err == nil {
+				if err != nil {
+					log(fmt.Sprintf("fsnotify: watcher resync (%s) err: %v", pth, err))
+				} else {
 					fixedPaths = append(fixedPaths, pth)
 					s.setVal(pth, val)
 				}
@@ -114,7 +119,10 @@ func (s *Strategy) setVal(pth string, val string) {
 	s.paths[pth].value = val
 	values := s.paths[pth].values
 	go func() {
+		redactDsn := val
+		log(fmt.Sprintf("fsnotify: background blocking-send dsn='%s', path=%s", redactDsn, pth))
 		values <- val
+		log(fmt.Sprintf("fsnotify: background sent success, dsn='%s', path=%s", redactDsn, pth))
 	}()
 }
 

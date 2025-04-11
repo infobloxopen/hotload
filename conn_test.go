@@ -11,6 +11,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/infobloxopen/hotload/logger"
 	"github.com/infobloxopen/hotload/metrics"
 )
 
@@ -130,7 +131,7 @@ var _ = Describe("PrometheusMetrics", func() {
 	`
 
 	It("Should emit the correct metrics", func() {
-		mc := newManagedConn(context.Background(), mockDriverConn{}, nil)
+		mc := newManagedConn(context.Background(), logger.GetLogger(), "dsn", "redactDsn", mockDriverConn{}, nil)
 
 		ctx := ContextWithExecLabels(context.Background(), map[string]string{"grpc_method": "method_1", "grpc_service": "service_1"})
 

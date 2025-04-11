@@ -58,7 +58,7 @@ kind-load:
 	kind load docker-image $(IMAGE_NAME)
 
 ci-integration-tests: integ-test-image kind-load deploy-integration-tests
-	(helm test --timeout=1200s hotload-integration-tests || (kubectl logs hotload-integration-tests-job && exit 1)) && kubectl logs hotload-integration-tests-job
+	(helm test --timeout=600s hotload-integration-tests || (kubectl logs hotload-integration-tests-job && exit 1)) && kubectl logs hotload-integration-tests-job
 
 delete-all:
 	helm uninstall hotload-integration-tests || true
@@ -66,7 +66,7 @@ delete-all:
 	kubectl delete pods --all || true
 
 postgres-docker-compose-up:
-	cd integrationtests/docker; docker compose up
+	cd integrationtests/docker; docker compose up --detach
 
 postgres-docker-compose-down:
 	cd integrationtests/docker; docker compose down

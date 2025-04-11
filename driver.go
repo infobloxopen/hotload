@@ -180,6 +180,8 @@ type hdriver struct {
 
 // chanGroup represents a hotload location that is being monitored
 type chanGroup struct {
+	dsn       string
+	redactDsn string
 	value     string
 	values    <-chan string
 	parentCtx context.Context
@@ -195,24 +197,28 @@ type chanGroup struct {
 // monitor the location for changes
 func (cg *chanGroup) run() {
 	for {
+		cg.log("chanGroup: run: select waiting...")
 		select {
 		case <-cg.parentCtx.Done():
 			cg.cancel()
-			cg.log("cancelling chanGroup context")
+			cg.log("chanGroup: run: parent context done, canceled chanGroup context for dsn:", cg.redactDsn)
 			return
 		case v := <-cg.values:
 			if v == cg.value {
 				// next update is the same, just ignore it
+				cg.log("chanGroup: run: connection information not changed")
 				continue
 			}
 			cg.valueChanged(v)
-			cg.log("connection information changed")
+			cg.log("chanGroup: run: connection information changed")
 		}
 	}
 }
 
 func (cg *chanGroup) valueChanged(v string) {
 	cg.mu.Lock()
+
+	prevRedactDsn := cg.redactDsn
 
 	// Prepare shallow copy of existing connections,
 	// and reset new connections to zero
@@ -233,6 +239,7 @@ func (cg *chanGroup) valueChanged(v string) {
 	// to call managedConn.Close(), which calls managedConn.afterClose(),
 	// which calls chanGroup.remove(), which tries to lock mutex.
 	prevCancel()
+	cg.log("chanGroup: canceled previous context for dsn:", prevRedactDsn)
 
 	// Reset previous connections
 	// Mutex MUST NOT be held by this point, because in the same thread,
@@ -275,13 +282,16 @@ func (cg *chanGroup) Open() (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+	cg.dsn = dsn
+	cg.redactDsn = dsn
 	conn, err := cg.sqlDriver.driver.Open(dsn)
 	if err != nil {
 		return conn, err
 	}
 
-	manConn := newManagedConn(cg.ctx, conn, cg.remove)
+	manConn := newManagedConn(cg.ctx, cg.log, cg.dsn, cg.redactDsn, conn, cg.remove)
 	cg.conns = append(cg.conns, manConn)
+	cg.log("chanGroup: opened managed conn:", manConn.redactDsn)
 
 	return manConn, nil
 }
@@ -292,6 +302,7 @@ func (cg *chanGroup) remove(conn *managedConn) {
 	for i, c := range cg.conns {
 		if c == conn {
 			cg.conns = append(cg.conns[:i], cg.conns[i+1:]...)
+			cg.log("chanGroup: removed managed conn:", conn.redactDsn)
 			return
 		}
 	}
