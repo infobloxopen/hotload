@@ -22,6 +22,8 @@ func testLogger(args ...any) {
 }
 
 func TestIntegrationtests(t *testing.T) {
+	//log.SetFlags(log.Flags() | log.Lmicroseconds)
+	log.SetFlags(log.Ltime | log.Lmicroseconds)
 	log.SetOutput(GinkgoWriter)
 	logger.WithLogger(testLogger)
 

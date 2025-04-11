@@ -66,7 +66,7 @@ delete-all:
 	kubectl delete pods --all || true
 
 postgres-docker-compose-up:
-	cd integrationtests/docker; docker compose up
+	cd integrationtests/docker; docker compose up --detach
 
 postgres-docker-compose-down:
 	cd integrationtests/docker; docker compose down

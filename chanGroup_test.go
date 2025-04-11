@@ -66,6 +66,8 @@ var _ = DescribeTableSubtree("Driver", Serial, func(forceKill bool) {
 			ctx, cancel = context.WithCancel(pctx)
 			mockw = newMockWatcher()
 			cg = &chanGroup{
+				dsn:       "1st-dsn",
+				redactDsn: "1st-dsn",
 				value:     "1st-dsn",
 				values:    mockw.getReceiveChan(),
 				parentCtx: pctx,
@@ -77,9 +79,9 @@ var _ = DescribeTableSubtree("Driver", Serial, func(forceKill bool) {
 				log:       logger.GetLogger(),
 			}
 			cg.conns = []*managedConn{
-				newManagedConn(ctx, &testConn{}, cg.remove),
-				newManagedConn(ctx, &testConn{}, cg.remove),
-				newManagedConn(ctx, &testConn{}, cg.remove),
+				newManagedConn(ctx, cg.log, cg.dsn, cg.redactDsn, &testConn{}, cg.remove),
+				newManagedConn(ctx, cg.log, cg.dsn, cg.redactDsn, &testConn{}, cg.remove),
+				newManagedConn(ctx, cg.log, cg.dsn, cg.redactDsn, &testConn{}, cg.remove),
 			}
 			mgdConns = cg.conns
 		}, NodeTimeout(5*time.Second))
