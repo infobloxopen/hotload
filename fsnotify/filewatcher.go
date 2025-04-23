@@ -2,7 +2,7 @@ package fsnotify
 
 import (
 	"context"
-	"net/url"
+	"fmt"
 	"os"
 	"path"
 	"strings"
@@ -11,6 +11,7 @@ import (
 
 	rfsnotify "github.com/fsnotify/fsnotify"
 	"github.com/infobloxopen/hotload"
+	"github.com/infobloxopen/hotload/internal"
 	"github.com/infobloxopen/hotload/logger"
 	"github.com/pkg/errors"
 )
@@ -37,13 +38,29 @@ type Strategy struct {
 	watcher watcher
 }
 
-type pathWatch struct {
-	path   string
-	values chan string
-	value  string
+type pendingOperation struct {
+	operation string
+	watchPath string
+	pathQuery string
+	dsn       string
+	redactDsn string
 }
 
-func readConfigFile(path string) (v []byte, err error) {
+type queryWatch struct {
+	parentPathW *pathWatch
+	pathQuery   string
+	updateChan  chan string
+	operChan    chan pendingOperation
+}
+
+type pathWatch struct {
+	parentStrat *Strategy
+	watchPath   string
+	value       string
+	queries     map[string]*queryWatch
+}
+
+func (s *Strategy) readConfigFile(path string) (v []byte, err error) {
 	v, err = os.ReadFile(path)
 	if err != nil {
 		return nil, errors.Wrapf(err, "could not read %v", path)
@@ -52,46 +69,58 @@ func readConfigFile(path string) (v []byte, err error) {
 	return
 }
 
-func resync(w watcher, pth string) (string, error) {
-	log := logger.GetLogger()
-	log("fsnotify: Path Name-Resync ", pth)
+func (s *Strategy) resync(w watcher, pth string) (string, error) {
+	s.logf("fsnotify", "resync path: '%s'", pth)
 	err := w.Remove(pth)
 	if err != nil && !errors.Is(err, rfsnotify.ErrNonExistentWatch) {
 		return "", err
 	}
-	bs, err := readConfigFile(pth)
+	bs, err := s.readConfigFile(pth)
 	if err != nil {
 		return "", err
 	}
 	return string(bs), w.Add(pth)
 }
 
-func (s *Strategy) run() {
-	log := logger.GetLogger()
+func (s *Strategy) runLoop() {
 	failedPaths := make(map[string]struct{})
 	for {
 		select {
-		case e := <-s.watcher.GetEvents():
-			log("fsnotify: Path Name-Run: got event: ", e.String())
-			if !e.Has(rfsnotify.Write) && !e.Has(rfsnotify.Remove) {
+		case ev, ok := <-s.watcher.GetEvents():
+			if !ok {
+				s.logf("fsnotify.runLoop", "Events chan closed, terminating")
+				return
+			}
+
+			s.logf("fsnotify.runLoop", "got event: %s", ev.String())
+			if !ev.Has(rfsnotify.Write) && !ev.Has(rfsnotify.Remove) {
 				continue
 			}
 
-			val, err := resync(s.watcher, e.Name)
+			val, err := s.resync(s.watcher, ev.Name)
 			if err != nil {
-				failedPaths[e.Name] = struct{}{}
+				s.logf("fsnotify.runLoop", "resync(%s) err: %v", ev.Name, err)
+				failedPaths[ev.Name] = struct{}{}
 				break
 			}
 
-			s.setVal(e.Name, val)
-		case e := <-s.watcher.GetErrors():
-			log("got error: ", e)
-			break
+			s.setVal(ev.Name, val)
+
+		case err, ok := <-s.watcher.GetErrors():
+			if !ok {
+				s.logf("fsnotify.runLoop", "Errors chan closed, terminating")
+				return
+			}
+			s.logf("fsnotify.runLoop", "got error: %s", err.Error())
+
 		case <-time.After(resyncPeriod):
+			s.logf("fsnotify.runLoop", "resyncPeriod %s timedout", resyncPeriod.String())
 			var fixedPaths []string
 			for pth := range failedPaths {
-				val, err := resync(s.watcher, pth)
-				if err == nil {
+				val, err := s.resync(s.watcher, pth)
+				if err != nil {
+					s.logf("fsnotify.runLoop", "resync(%s) err: %v", pth, err)
+				} else {
 					fixedPaths = append(fixedPaths, pth)
 					s.setVal(pth, val)
 				}
@@ -112,16 +141,21 @@ func (s *Strategy) setVal(pth string, val string) {
 		return
 	}
 	s.paths[pth].value = val
-	values := s.paths[pth].values
-	go func() {
-		values <- val
-	}()
+	redactDsn := internal.RedactUrl(val)
+	for _, qryW := range s.paths[pth].queries {
+		pendOp := pendingOperation{
+			operation: "send",
+			dsn:       val,
+			redactDsn: redactDsn,
+		}
+		qryW.operChan <- pendOp
+	}
 }
 
 // Watch implements the hotload.Strategy interface.
-func (s *Strategy) Watch(ctx context.Context, pth string, options url.Values) (value string, values <-chan string, err error) {
-	log := logger.GetLogger()
+func (s *Strategy) Watch(ctx context.Context, pth string, pathQry string) (value string, values <-chan string, err error) {
 	pth = path.Clean(pth)
+	pathQry = strings.TrimSpace(pathQry)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// if this is the first time this strategy is called, initialize ourselves
@@ -131,25 +165,178 @@ func (s *Strategy) Watch(ctx context.Context, pth string, options url.Values) (v
 			return "", nil, err
 		}
 		s.watcher = watcher
-		go s.run()
+		go s.runLoop()
 	}
-	notifier, found := s.paths[pth]
-	if !found {
-		log("fsnotify: Path Name-Init ", pth)
+	pathW, found := s.paths[pth]
+	if found {
+		pathW.logf("fsnotify.Watch", "path already being watched")
+	} else {
+		s.logf("fsnotify.Watch", "new path to be watched: '%s'", pth)
 		if err := s.watcher.Add(pth); err != nil {
 			return "", nil, err
 		}
-		bs, err := readConfigFile(pth)
+		bs, err := s.readConfigFile(pth)
 		if err != nil {
 			s.watcher.Remove(pth)
 			return "", nil, err
 		}
-		notifier = &pathWatch{
-			path:   pth,
-			value:  string(bs),
-			values: make(chan string),
+		pathW = &pathWatch{
+			parentStrat: s,
+			watchPath:   pth,
+			value:       string(bs),
+			queries:     make(map[string]*queryWatch),
 		}
-		s.paths[pth] = notifier
+		s.paths[pth] = pathW
 	}
-	return notifier.value, notifier.values, nil
+
+	qryW, found := pathW.queries[pathQry]
+	if found {
+		qryW.logf("fsnotify.Watch", "query already being watched")
+	} else {
+		pathW.logf("fsnotify.Watch", "new query to be watched: '%s'", pathQry)
+		qryW = &queryWatch{
+			parentPathW: pathW,
+			pathQuery:   pathQry,
+			updateChan:  make(chan string),
+			operChan:    make(chan pendingOperation, 30),
+		}
+		pathW.queries[pathQry] = qryW
+		go qryW.opLoop()
+	}
+
+	return pathW.value, qryW.updateChan, nil
+}
+
+// CloseWatch implements the hotload.Strategy interface.
+// Closes the specified watch by removing the path
+// from the watcher and closing the path's update channel.
+func (s *Strategy) CloseWatch(pth string, pathQry string) error {
+	pth = path.Clean(pth)
+	pathQry = strings.TrimSpace(pathQry)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pathW, found := s.paths[pth]
+	if found {
+		qryW, ok := pathW.queries[pathQry]
+		if ok {
+			pendOp := pendingOperation{
+				operation: "close",
+				watchPath: pth,
+				pathQuery: pathQry,
+			}
+			qryW.operChan <- pendOp
+			qryW.logf("fsnotify.CloseWatch", "sent pending close operation")
+		}
+	}
+	return nil
+}
+
+func (s *Strategy) processWatchClosure(pendOp pendingOperation) error {
+	var err error
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pathW, found := s.paths[pendOp.watchPath]
+	if found {
+		qryW, ok := pathW.queries[pendOp.pathQuery]
+		if ok {
+			delete(pathW.queries, pendOp.pathQuery)
+			qryW.closeUpdateChan()
+			qryW.logf("fsnotify.processWatchClosure", "closed update channel")
+		}
+		if len(pathW.queries) <= 0 {
+			err = s.watcher.Remove(pendOp.watchPath)
+			if err == nil {
+				s.logf("fsnotify.processWatchClosure", "removed path from being watched '%s'", pendOp.watchPath)
+			} else {
+				s.logf("fsnotify.processWatchClosure", "failed to remove '%s' from watcher, err=%v", pendOp.watchPath, err)
+			}
+			delete(s.paths, pendOp.watchPath)
+			s.logf("fsnotify.processWatchClosure", "strategy removed path '%s'", pendOp.watchPath)
+		}
+	}
+	return err
+}
+
+// Close implements the hotload.Strategy interface.
+// Closes this strategy by closing the internal watcher
+// and closing all the update channels.
+func (s *Strategy) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.watcher != nil {
+		s.watcher.Close()
+		s.logf("fsnotify.Close", "closed internal watcher")
+		s.watcher = nil
+	}
+	for _, pathW := range s.paths {
+		for _, qryW := range pathW.queries {
+			qryW.closeUpdateChan()
+			qryW.logf("fsnotify.Close", "closed update channel")
+		}
+		pathW.queries = nil
+	}
+	s.paths = nil
+}
+
+func (qw *queryWatch) sendUpdate(val, redactDsn string) {
+	if qw.updateChan == nil {
+		return
+	}
+
+	defer func() {
+		// Recover/ignore from "panic: send on closed channel"
+		r := recover()
+		if r != nil {
+			qw.logf("fsnotify.sendUpdate", "panic recovery '%s'", r)
+		}
+	}()
+
+	qw.logf("fsnotify.sendUpdate", "block-sending redactDsn='%s'", redactDsn)
+	qw.updateChan <- val
+	qw.logf("fsnotify.sendUpdate", "successfully sent redactDsn='%s'", redactDsn)
+}
+
+func (qw *queryWatch) closeUpdateChan() {
+	close(qw.updateChan)
+	qw.updateChan = nil
+}
+
+func (qw *queryWatch) opLoop() {
+	for {
+		select {
+		case pendOp, ok := <-qw.operChan:
+			if !ok {
+				qw.logf("fsnotify.opLoop", "operChan closed, terminating")
+				return
+			}
+			switch pendOp.operation {
+			case "close":
+				qw.logf("fsnotify.opLoop", "pendingOperation '%s', pendingPath=%s, pendingQuery='%s'",
+					pendOp.operation, pendOp.watchPath, pendOp.pathQuery)
+				qw.parentPathW.parentStrat.processWatchClosure(pendOp)
+			case "send":
+				qw.logf("fsnotify.opLoop", "pendingOperation '%s', redactDsn='%s'",
+					pendOp.operation, pendOp.redactDsn)
+				qw.sendUpdate(pendOp.dsn, pendOp.redactDsn)
+			default:
+				qw.logf("fsnotify.opLoop", "ignore invalid pendingOperation '%s'",
+					pendOp.operation)
+			}
+		}
+	}
+}
+
+func (s *Strategy) logf(prefix, format string, args ...any) {
+	logPrefix := fmt.Sprintf("%s:", prefix)
+	logger.Logf(logPrefix, format, args...)
+}
+
+func (pw *pathWatch) logf(prefix, format string, args ...any) {
+	logPrefix := fmt.Sprintf("%s[%s]:", prefix, pw.watchPath)
+	logger.Logf(logPrefix, format, args...)
+}
+
+func (qw *queryWatch) logf(prefix, format string, args ...any) {
+	logPrefix := fmt.Sprintf("%s[%s?%s]:", prefix, qw.parentPathW.watchPath, qw.pathQuery)
+	logger.Logf(logPrefix, format, args...)
 }

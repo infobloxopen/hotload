@@ -13,13 +13,18 @@ import (
 )
 
 func assertStringFromChannel(name string, want string, from <-chan string) {
+again:
 	select {
 	case got := <-from:
-		if got != want {
-			Fail(fmt.Sprintf("%s: expected '%v' got '%v'", name, want, got))
+		fmt.Printf("assertStringFromChannel: expecting '%s', got update: '%s'\n", want, got)
+		if got == want {
+			return
+		} else {
+			// dedup fsnotify WRITE events
+			goto again
 		}
 	case <-time.After(resyncPeriod * 2):
-		Fail(fmt.Sprintf("%s: timeout", name))
+		Fail(fmt.Sprintf("%s: timeout: expecting '%s'", name, want))
 	}
 }
 
@@ -90,7 +95,7 @@ var _ = Describe("FileWatcher", func() {
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			gotValue, gotValues, err := s.Watch(ctx, tt.args.pth, tt.args.options)
+			gotValue, gotValues, err := s.Watch(ctx, tt.args.pth, tt.args.options.Encode())
 			if (err != nil) != tt.wantErr {
 				Expect(err).To(HaveOccurred())
 				return
@@ -103,6 +108,9 @@ var _ = Describe("FileWatcher", func() {
 			if tt.tearDown != nil {
 				tt.tearDown(&tt.args)
 			}
+
+			_ = s.CloseWatch(tt.args.pth, tt.args.options.Encode())
+			time.Sleep(10 * time.Millisecond)
 		},
 		Entry("file not found", test{
 			args: args{
@@ -233,7 +241,7 @@ var _ = Describe("FileWatcher", func() {
 			// we'll pass a CHMOD event and verify the 'bad path' is still in the paths map
 			bp := "badpath"
 			strat.watcher.Add(bp)
-			go s.run()
+			go s.runLoop()
 			go func() {
 				watcher.eventChannel <- rfsnotify.Event{
 					Name: "chaff",
@@ -244,6 +252,42 @@ var _ = Describe("FileWatcher", func() {
 			_, v := watcher.paths[bp]
 			// run didn't pass through resync
 			Expect(v).To(BeTrue())
+		})
+	})
+
+	Context("Two watches with same path but diff query-params", func() {
+		It("Should update channels for both watches", func() {
+			f, _ := os.CreateTemp("", "hotload_fsnotify_filewatcher_two_watches_unittest_")
+			f.Write([]byte("_"))
+			watchPath := f.Name()
+			f.Close()
+			defer os.Remove(watchPath)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			gotValue1, updateChan1, err := s.Watch(ctx, watchPath, "")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(updateChan1).ToNot(BeNil())
+			Expect(gotValue1).To(Equal("_"))
+
+			urlValues := url.Values{"forceKill": []string{"true"}}
+			gotValue2, updateChan2, err := s.Watch(ctx, watchPath, urlValues.Encode())
+			Expect(err).ToNot(HaveOccurred())
+			Expect(updateChan2).ToNot(BeNil())
+			Expect(gotValue2).To(Equal("_"))
+
+			os.WriteFile(watchPath, []byte("a"), 0666)
+			assertStringFromChannel("updateChan1 waiting for update a", "a", updateChan1)
+			assertStringFromChannel("updateChan2 waiting for update a", "a", updateChan2)
+
+			os.WriteFile(watchPath, []byte("b"), 0666)
+			assertStringFromChannel("updateChan1 waiting for update b", "b", updateChan1)
+			assertStringFromChannel("updateChan2 waiting for update b", "b", updateChan2)
+
+			_ = s.CloseWatch(watchPath, "")
+			_ = s.CloseWatch(watchPath, urlValues.Encode())
+			time.Sleep(10 * time.Millisecond)
 		})
 	})
 })

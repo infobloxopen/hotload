@@ -99,7 +99,7 @@ db, err := sql.Open("hotload", "fsnotify://postgres/tmp/myconfig.txt?forceKill=t
 ```
 $ make postgres-docker-compose-up
 $ cd integrationstests
-$ go test -v -race
+$ go test -v -race -timeout=3m
 $ vi ...
 $ go test -v -race # this can be repeated  in your edit-run-test cycle
 $ make postgres-docker-compose-down

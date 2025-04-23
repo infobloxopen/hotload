@@ -55,6 +55,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/infobloxopen/hotload/internal"
 	"github.com/infobloxopen/hotload/logger"
 )
 
@@ -63,7 +64,13 @@ type Strategy interface {
 	// Watch returns back the contents of the resource as well as a channel
 	// for subsequent updates (if the value has changed). If there is an error
 	// getting the initial value, an error is returned.
-	Watch(ctx context.Context, pth string, options url.Values) (value string, values <-chan string, err error)
+	Watch(ctx context.Context, pth string, pathQry string) (value string, newValChan <-chan string, err error)
+
+	// CloseWatch closes the specified watch.
+	CloseWatch(pth string, pathQry string) error
+
+	// Close resets/closes strategy, in particular closes all the update channels.
+	Close()
 }
 
 const forceKill = "forceKill"
@@ -155,6 +162,21 @@ func RegisterStrategy(name string, strategy Strategy) {
 	strategies[name] = strategy
 }
 
+// UnregisterStrategy unregisters the named driver strategy.
+// Does nothing if strategy does not exist.
+// Intended for internal unit-testing.
+func UnregisterStrategy(name string) {
+	mu.Lock()
+	defer mu.Unlock()
+	strategy, ok := strategies[name]
+	if ok {
+		if strategy != nil {
+			strategy.Close()
+		}
+		delete(strategies, name)
+	}
+}
+
 // Strategies returns a sorted list of the names of the registered drivers.
 func Strategies() []string {
 	mu.RLock()
@@ -180,64 +202,91 @@ type hdriver struct {
 
 // chanGroup represents a hotload location that is being monitored
 type chanGroup struct {
-	value     string
-	values    <-chan string
-	parentCtx context.Context
-	ctx       context.Context
-	cancel    context.CancelFunc
-	sqlDriver *driverInstance
-	mu        sync.RWMutex
-	forceKill bool
-	conns     []*managedConn
-	log       logger.Logger
+	name       string
+	value      string
+	redactVal  string
+	newValChan <-chan string
+	parentCtx  context.Context
+	ctx        context.Context
+	cancel     context.CancelFunc
+	sqlDriver  *driverInstance
+	mu         sync.RWMutex
+	forceKill  bool
+	conns      []*managedConn
 }
 
 // monitor the location for changes
-func (cg *chanGroup) run() {
+func (cg *chanGroup) runLoop() {
 	for {
+		cg.logf("chanGroup.runLoop", "select waiting...")
 		select {
 		case <-cg.parentCtx.Done():
 			cg.cancel()
-			cg.log("cancelling chanGroup context")
+			cg.logf("chanGroup.runLoop", "parent context done, canceled chanGroup context, terminating")
 			return
-		case v := <-cg.values:
-			if v == cg.value {
-				// next update is the same, just ignore it
-				continue
+
+		case newValue, ok := <-cg.newValChan:
+			if !ok {
+				cg.logf("chanGroup.runLoop", "newValChan closed, terminating")
+				return
 			}
-			cg.valueChanged(v)
-			cg.log("connection information changed")
+			cg.processNewValue(newValue)
 		}
 	}
 }
 
-func (cg *chanGroup) valueChanged(v string) {
-	cg.mu.Lock()
+func (cg *chanGroup) processNewValue(newValue string) {
+	criticalSection := func() (bool, context.CancelFunc, string, []*managedConn) {
+		cg.mu.Lock()
+		defer cg.mu.Unlock()
 
-	// Prepare shallow copy of existing connections,
-	// and reset new connections to zero
-	prevConns := cg.conns
-	cg.conns = make([]*managedConn, 0)
+		prevValue := cg.value
+		prevRedactVal := cg.redactVal
 
-	// Prepare copy of existing cancel ctx fn,
-	// and reset to new cancelable ctx
-	prevCancel := cg.cancel
-	cg.ctx, cg.cancel = context.WithCancel(cg.parentCtx)
+		newRedactVal := internal.RedactUrl(newValue)
+		cg.logf("chanGroup.processNewValue", "old conn dsn: '%s'", prevRedactVal)
+		cg.logf("chanGroup.processNewValue", "new conn dsn: '%s'", newRedactVal)
 
-	cg.value = v
+		if newValue == prevValue {
+			// next update is the same, just ignore it
+			cg.logf("chanGroup.processNewValue", "conn dsn not changed")
+			return false, nil, "", nil
+		}
+		cg.logf("chanGroup.processNewValue", "conn dsn changed")
 
-	// End critical-section, we MUST unlock mutex before continuing
-	cg.mu.Unlock()
+		// Prepare shallow copy of existing connections,
+		// and reset new connections to zero
+		prevConns := cg.conns
+		cg.conns = make([]*managedConn, 0)
+
+		// Prepare copy of existing cancel ctx fn,
+		// and reset to new cancelable ctx
+		prevCancel := cg.cancel
+		cg.ctx, cg.cancel = context.WithCancel(cg.parentCtx)
+
+		cg.value = newValue
+		cg.redactVal = newRedactVal
+
+		return true, prevCancel, prevRedactVal, prevConns
+	}
+
+	changedFlag, prevCancel, prevRedactVal, prevConns := criticalSection()
+	if !changedFlag {
+		return
+	}
+
+	// Mutex MUST be unlocked at this point before continuing
 
 	// Canceling previous ctx can potentially cause other threads
 	// to call managedConn.Close(), which calls managedConn.afterClose(),
-	// which calls chanGroup.remove(), which tries to lock mutex.
+	// which calls chanGroup.removeMgdConn(), which tries to lock mutex.
 	prevCancel()
+	cg.logf("chanGroup.processNewValue", "canceled context for previous dsn: '%s'", prevRedactVal)
 
 	// Reset previous connections
 	// Mutex MUST NOT be held by this point, because in the same thread,
 	// we will call managedConn.Close() if forceKill is true,
-	// which calls managedConn.afterClose(), which calls chanGroup.remove(),
+	// which calls managedConn.afterClose(), which calls chanGroup.removeMgdConn(),
 	// which tries to lock mutex.
 	for _, c := range prevConns {
 		c.Reset(true)
@@ -249,7 +298,7 @@ func (cg *chanGroup) valueChanged(v string) {
 	}
 }
 
-func mergeConnectionStringOptions(dsn string, options map[string]string) (string, error) {
+func mergeConnStringOptions(dsn string, options map[string]string) (string, error) {
 	if len(options) == 0 {
 		return dsn, nil
 	}
@@ -271,40 +320,42 @@ func mergeConnectionStringOptions(dsn string, options map[string]string) (string
 func (cg *chanGroup) Open() (driver.Conn, error) {
 	cg.mu.Lock()
 	defer cg.mu.Unlock()
-	dsn, err := mergeConnectionStringOptions(cg.value, cg.sqlDriver.options)
+	dsn, err := mergeConnStringOptions(cg.value, cg.sqlDriver.options)
 	if err != nil {
 		return nil, err
 	}
+	redactDsn := internal.RedactUrl(dsn)
 	conn, err := cg.sqlDriver.driver.Open(dsn)
 	if err != nil {
 		return conn, err
 	}
 
-	manConn := newManagedConn(cg.ctx, conn, cg.remove)
+	manConn := newManagedConn(cg.ctx, dsn, redactDsn, conn, cg.removeMgdConn)
 	cg.conns = append(cg.conns, manConn)
+	cg.logf("chanGroup.Open", "opened managed conn: '%s'", manConn.redactDsn)
 
 	return manConn, nil
 }
 
-func (cg *chanGroup) remove(conn *managedConn) {
+func (cg *chanGroup) removeMgdConn(conn *managedConn) {
 	cg.mu.Lock()
 	defer cg.mu.Unlock()
 	for i, c := range cg.conns {
 		if c == conn {
 			cg.conns = append(cg.conns[:i], cg.conns[i+1:]...)
+			cg.logf("chanGroup.removeMgdConn", "removed: '%s'", conn.redactDsn)
 			return
 		}
 	}
 }
 
-func (cg *chanGroup) parseValues(vs url.Values) {
-	cg.mu.Lock()
-	defer cg.mu.Unlock()
-	cg.log("parsing values", vs)
-	if v, ok := vs[forceKill]; ok {
+func (cg *chanGroup) parseUrlValues(vs url.Values) {
+	cg.logf("chanGroup.parseUrlValues", "values: %s", vs)
+	v, ok := vs[forceKill]
+	if ok && len(v) > 0 {
 		firstValue := v[0]
 		cg.forceKill = firstValue == "true"
-		cg.log("forceKill set to true")
+		cg.logf("chanGroup.parseUrlValues", "forceKill set to true")
 	}
 }
 
@@ -328,26 +379,38 @@ func (h *hdriver) Open(name string) (driver.Conn, error) {
 			return nil, ErrUnknownDriver
 		}
 		queryParams := uri.Query()
-		value, values, err := strategy.Watch(h.ctx, uri.Path, queryParams)
+		value, newValChan, err := strategy.Watch(h.ctx, uri.Path, queryParams.Encode())
 		if err != nil {
 			return nil, err
 		}
 		ctx, cancel := context.WithCancel(h.ctx)
 		cgroup = &chanGroup{
-			value:     value,
-			values:    values,
-			parentCtx: h.ctx,
-			ctx:       ctx,
-			cancel:    cancel,
-			sqlDriver: sqlDriver,
-			conns:     make([]*managedConn, 0),
-			log:       GetLogger(),
+			name:       name,
+			value:      value,
+			redactVal:  internal.RedactUrl(value),
+			newValChan: newValChan,
+			parentCtx:  h.ctx,
+			ctx:        ctx,
+			cancel:     cancel,
+			sqlDriver:  sqlDriver,
+			conns:      make([]*managedConn, 0),
 		}
-		cgroup.parseValues(queryParams)
+		cgroup.parseUrlValues(queryParams)
 		h.cgroup[name] = cgroup
-		go cgroup.run()
+		h.logf("hotload", "new chanGroup: '%s'", name)
+		go cgroup.runLoop()
 	}
 	return cgroup.Open()
+}
+
+func (h *hdriver) logf(prefix, format string, args ...any) {
+	logPrefix := fmt.Sprintf("%s:", prefix)
+	logger.Logf(logPrefix, format, args...)
+}
+
+func (cg *chanGroup) logf(prefix, format string, args ...any) {
+	logPrefix := fmt.Sprintf("%s[%s]:", prefix, cg.name)
+	logger.Logf(logPrefix, format, args...)
 }
 
 // Deprecated: Use logger.WithLogger() instead, retained for backwards-compatibility only

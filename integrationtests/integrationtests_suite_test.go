@@ -2,10 +2,15 @@ package integrationtests
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/infobloxopen/hotload/internal"
+	"github.com/infobloxopen/hotload/logger"
+
+	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -15,7 +20,19 @@ var (
 	hotloadTest1Dsn string
 )
 
+func testLogger(args ...any) {
+	log.Println(args...)
+}
+
 func TestIntegrationtests(t *testing.T) {
+	//log.SetFlags(log.Flags() | log.Lmicroseconds)
+	log.SetFlags(log.Ltime | log.Lmicroseconds)
+	log.SetOutput(GinkgoWriter)
+	logger.WithLogger(testLogger)
+
+	nrr := internal.NewNonRandomReader(1)
+	uuid.SetRand(nrr)
+
 	pgUser := "admin"
 	pgPass := "test"
 	pgPort := "5432"
