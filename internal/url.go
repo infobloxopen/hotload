@@ -4,6 +4,14 @@ import (
 	"net/url"
 )
 
+var (
+	rss SecretSink
+)
+
+func init() {
+	rss = NewRandomSecretSink(20)
+}
+
 // RedactUrl redacts the user/pass components of the url
 func RedactUrl(dsnUrl string) string {
 	redactStr := "---"
@@ -22,7 +30,12 @@ func RedactUrl(dsnUrl string) string {
 	if len(password) <= 0 {
 		password = "password"
 	}
-	redactPass := password[0:1] + redactStr + password[len(password)-1:]
+	//redactPass := password[0:1] + redactStr + password[len(password)-1:]
+	redactPass, err := rss.Add(password)
+	if err != nil {
+		// Ignore error and return fake blanked out passwd
+		redactPass = redactStr
+	}
 
 	uri.User = url.UserPassword(redactUser, redactPass)
 	return uri.String()

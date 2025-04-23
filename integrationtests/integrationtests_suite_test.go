@@ -7,7 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/infobloxopen/hotload/internal"
 	"github.com/infobloxopen/hotload/logger"
+
+	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -26,6 +29,9 @@ func TestIntegrationtests(t *testing.T) {
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
 	log.SetOutput(GinkgoWriter)
 	logger.WithLogger(testLogger)
+
+	nrr := internal.NewNonRandomReader(1)
+	uuid.SetRand(nrr)
 
 	pgUser := "admin"
 	pgPass := "test"

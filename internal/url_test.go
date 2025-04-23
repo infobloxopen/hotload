@@ -4,24 +4,29 @@ import (
 	"fmt"
 	"net/url"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestRedactUrl(t *testing.T) {
+	nrr := NewNonRandomReader(1)
+	uuid.SetRand(nrr)
+
 	testcases := []struct {
 		inputDsn  string
 		expectDsn string
 	}{
 		{
 			inputDsn:  "qwerty",
-			expectDsn: "//u---r:p---d@qwerty",
+			expectDsn: "//u---r:01020304@qwerty",
 		},
 		{
 			inputDsn:  "mysql://u:p@amazon.rds.com:5432/contacts",
-			expectDsn: "mysql://u---u:p---p@amazon.rds.com:5432/contacts",
+			expectDsn: "mysql://u---u:11121314@amazon.rds.com:5432/contacts",
 		},
 		{
 			inputDsn:  "postgresql://admin:test@localhost:5432/hotload_test?sslmode=disable",
-			expectDsn: "postgresql://a---n:t---t@localhost:5432/hotload_test?sslmode=disable",
+			expectDsn: "postgresql://a---n:21222324@localhost:5432/hotload_test?sslmode=disable",
 		},
 	}
 
