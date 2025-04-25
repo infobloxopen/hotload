@@ -54,6 +54,7 @@ import (
 	"net/url"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/infobloxopen/hotload/internal"
 	"github.com/infobloxopen/hotload/logger"
@@ -202,17 +203,20 @@ type hdriver struct {
 
 // chanGroup represents a hotload location that is being monitored
 type chanGroup struct {
-	name       string
-	value      string
-	redactVal  string
-	newValChan <-chan string
-	parentCtx  context.Context
-	ctx        context.Context
-	cancel     context.CancelFunc
-	sqlDriver  *driverInstance
-	mu         sync.RWMutex
-	forceKill  bool
-	conns      []*managedConn
+	name          string
+	value         string
+	redactVal     string
+	newValChan    <-chan string
+	parentCtx     context.Context
+	ctx           context.Context
+	cancel        context.CancelFunc
+	sqlDriver     *driverInstance
+	mu            sync.RWMutex
+	forceKill     bool
+	conns         []*managedConn
+	prevCancel    context.CancelFunc
+	prevRedactVal string
+	prevConns     []*managedConn
 }
 
 // monitor the location for changes
@@ -236,7 +240,17 @@ func (cg *chanGroup) runLoop() {
 }
 
 func (cg *chanGroup) processNewValue(newValue string) {
-	criticalSection := func() (bool, context.CancelFunc, string, []*managedConn) {
+	type oldInfo struct {
+		changedFlag       bool
+		prevPrevCancel    context.CancelFunc
+		prevPrevRedactVal string
+		prevPrevConns     []*managedConn
+		prevCancel        context.CancelFunc
+		prevRedactVal     string
+		prevConns         []*managedConn
+	}
+
+	criticalSection := func() oldInfo {
 		cg.mu.Lock()
 		defer cg.mu.Unlock()
 
@@ -250,28 +264,42 @@ func (cg *chanGroup) processNewValue(newValue string) {
 		if newValue == prevValue {
 			// next update is the same, just ignore it
 			cg.logf("chanGroup.processNewValue", "conn dsn not changed")
-			return false, nil, "", nil
+			return oldInfo{}
 		}
 		cg.logf("chanGroup.processNewValue", "conn dsn changed")
 
+		result := oldInfo{
+			changedFlag:       true,
+			prevPrevConns:     cg.prevConns,
+			prevPrevCancel:    cg.prevCancel,
+			prevPrevRedactVal: cg.prevRedactVal,
+		}
+
 		// Prepare shallow copy of existing connections,
 		// and reset new connections to zero
-		prevConns := cg.conns
+		cg.prevConns = cg.conns
 		cg.conns = make([]*managedConn, 0)
 
 		// Prepare copy of existing cancel ctx fn,
 		// and reset to new cancelable ctx
-		prevCancel := cg.cancel
+		cg.prevCancel = cg.cancel
 		cg.ctx, cg.cancel = context.WithCancel(cg.parentCtx)
 
+		// Prepare copy of existing value,
+		// and reset to new value
+		cg.prevRedactVal = cg.redactVal
 		cg.value = newValue
 		cg.redactVal = newRedactVal
 
-		return true, prevCancel, prevRedactVal, prevConns
+		result.prevConns = cg.prevConns
+		result.prevCancel = cg.prevCancel
+		result.prevRedactVal = cg.prevRedactVal
+
+		return result
 	}
 
-	changedFlag, prevCancel, prevRedactVal, prevConns := criticalSection()
-	if !changedFlag {
+	prev := criticalSection()
+	if !prev.changedFlag {
 		return
 	}
 
@@ -280,20 +308,55 @@ func (cg *chanGroup) processNewValue(newValue string) {
 	// Canceling previous ctx can potentially cause other threads
 	// to call managedConn.Close(), which calls managedConn.afterClose(),
 	// which calls chanGroup.removeMgdConn(), which tries to lock mutex.
-	prevCancel()
-	cg.logf("chanGroup.processNewValue", "canceled context for previous dsn: '%s'", prevRedactVal)
+	if cg.forceKill {
+		// Immediately cancel the previous dsn
+		if prev.prevCancel != nil {
+			prev.prevCancel()
+			cg.logf("chanGroup.processNewValue", "canceled context for previous dsn: '%s'", prev.prevRedactVal)
+		}
+	} else {
+		// Immediately cancel the previous-previous dsn.
+		// We let the previous dsn to gracefully continue until the next dsn-change.
+		if prev.prevPrevCancel != nil {
+			prev.prevPrevCancel()
+			cg.logf("chanGroup.processNewValue", "canceled context for previous-previous dsn: '%s'", prev.prevPrevRedactVal)
+		}
+	}
+
+	// Yield to let other threads process cancel signal.
+	// Otherwise, there's a race and what happens (esp if forceKill=true)
+	// is that sometimes a db.Exec completes successfully (before cancel is processed),
+	// but db.Exec is later killed (closed) below because dsn changed, resulting in
+	// db.Exec returning error.  This is inconsistent.
+	time.Sleep(1 * time.Millisecond)
 
 	// Reset previous connections
 	// Mutex MUST NOT be held by this point, because in the same thread,
 	// we will call managedConn.Close() if forceKill is true,
 	// which calls managedConn.afterClose(), which calls chanGroup.removeMgdConn(),
 	// which tries to lock mutex.
-	for _, c := range prevConns {
-		c.Reset(true)
-
-		if cg.forceKill {
+	if cg.forceKill {
+		// Immediately reset/close previous conns
+		cg.logf("chanGroup.processNewValue", "reset/close conns for previous dsn: '%s'", prev.prevRedactVal)
+		for _, c := range prev.prevConns {
+			c.Reset(true)
 			// ignore errors from close
 			c.Close()
+		}
+	} else {
+		// Immediately close previous-previous conns.
+		// We let the previous conns to gracefully continue until the next dsn-change.
+		cg.logf("chanGroup.processNewValue", "close conns for previous-previous dsn: '%s'", prev.prevPrevRedactVal)
+		for _, c := range prev.prevPrevConns {
+			// ignore errors from close
+			c.Close()
+		}
+
+		// Immediately reset (but do not close) previous conns.
+		// We let the previous conns to gracefully continue until the next dsn-change.
+		cg.logf("chanGroup.processNewValue", "reset conns for previous dsn: '%s'", prev.prevPrevRedactVal)
+		for _, c := range prev.prevConns {
+			c.Reset(true)
 		}
 	}
 }
@@ -343,7 +406,7 @@ func (cg *chanGroup) removeMgdConn(conn *managedConn) {
 	for i, c := range cg.conns {
 		if c == conn {
 			cg.conns = append(cg.conns[:i], cg.conns[i+1:]...)
-			cg.logf("chanGroup.removeMgdConn", "removed: '%s'", conn.redactDsn)
+			cg.logf("chanGroup.removeMgdConn", "%d: removed: '%s'", i, conn.redactDsn)
 			return
 		}
 	}

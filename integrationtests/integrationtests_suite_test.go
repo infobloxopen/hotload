@@ -16,9 +16,30 @@ import (
 )
 
 var (
+	postgresHost = "localhost"
+	postgresPort = "5432"
+
 	hotloadTestDsn  string
 	hotloadTest1Dsn string
+
+	hldatabaseSuperDsn string
+	hldatabaseAdminDsn string
+
+	superUser  = "postgres"
+	superPass  = "postgres"
+	adminUser  = "admin"
+	adminPass  = "test"
+	testDbUser = "uuser"
 )
+
+func testDbPass(which int) string {
+	return fmt.Sprintf("ppass%d", which)
+}
+
+func hldatabasePassDsn(which int) string {
+	return fmt.Sprintf("postgresql://%s:%s@%s:%s/hldatabase?sslmode=disable",
+		testDbUser, testDbPass(which), postgresHost, postgresPort)
+}
 
 func testLogger(args ...any) {
 	log.Println(args...)
@@ -33,20 +54,27 @@ func TestIntegrationtests(t *testing.T) {
 	nrr := internal.NewNonRandomReader(1)
 	uuid.SetRand(nrr)
 
-	pgUser := "admin"
-	pgPass := "test"
-	pgPort := "5432"
-
 	pgHost, ok := os.LookupEnv("HOTLOAD_INTEGRATION_TEST_POSTGRES_HOST")
 	pgHost = strings.TrimSpace(pgHost)
-	if !ok || len(pgHost) <= 0 {
-		pgHost = "localhost"
+	if ok && len(pgHost) > 0 {
+		postgresHost = pgHost
+	}
+
+	pgPort, ok := os.LookupEnv("HOTLOAD_INTEGRATION_TEST_POSTGRES_PORT")
+	pgPort = strings.TrimSpace(pgPort)
+	if ok && len(pgPort) > 0 {
+		postgresPort = pgPort
 	}
 
 	hotloadTestDsn = fmt.Sprintf("postgresql://%s:%s@%s:%s/hotload_test?sslmode=disable",
-		pgUser, pgPass, pgHost, pgPort)
+		adminUser, adminPass, postgresHost, postgresPort)
 	hotloadTest1Dsn = fmt.Sprintf("postgresql://%s:%s@%s:%s/hotload_test1?sslmode=disable",
-		pgUser, pgPass, pgHost, pgPort)
+		adminUser, adminPass, postgresHost, postgresPort)
+
+	hldatabaseSuperDsn = fmt.Sprintf("postgresql://%s:%s@%s:%s/hldatabase?sslmode=disable",
+		superUser, superPass, postgresHost, postgresPort)
+	hldatabaseAdminDsn = fmt.Sprintf("postgresql://%s:%s@%s:%s/hldatabase?sslmode=disable",
+		adminUser, adminPass, postgresHost, postgresPort)
 
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Integration Tests")

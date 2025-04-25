@@ -20,10 +20,15 @@ import (
 const (
 	fsnotifyStrategy = "fsnotify"
 	configPath       = "/tmp/hotload_integration_test_dsn_config.txt"
-	testSqlSetup     = "CREATE TABLE IF NOT EXISTS test (cnum int, csource text, csleep text)"
+	userSqlSetup     = "CREATE USER uuser WITH PASSWORD 'ppass1'"
+	userSqlTeardown  = "DROP USER IF EXISTS uuser"
+	testSqlSetup     = "CREATE TABLE IF NOT EXISTS test (cnum INT, csource TEXT, csleep TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)"
 	testSqlTeardown  = "DROP TABLE IF EXISTS test"
 	truncSqlSetup    = "TRUNCATE TABLE test"
 	initSqlSetup     = "INSERT INTO test (cnum, csource) VALUES (161803, 'initial')"
+	grantSqlSetup    = "GRANT ALL ON test TO PUBLIC"
+
+	setDSNSleepDur = 100 * time.Millisecond
 )
 
 var (
@@ -45,9 +50,8 @@ func setDSN(dsn string, path string) {
 	log.Printf("setDSN: success writing '%s' to '%s'", dsn, path)
 
 	// Yield thread to let switch over take place
-	dur := 250 * time.Millisecond
-	time.Sleep(dur)
-	log.Printf("setDSN: slept/yielded %s", dur)
+	time.Sleep(setDSNSleepDur)
+	log.Printf("setDSN: slept/yielded %s", setDSNSleepDur)
 }
 
 // Open a db using postgres driver, or die
@@ -105,7 +109,52 @@ func expectValueInDb(db *sql.DB, source string, expErr bool, expRowCount int, ex
 	Expect(gotRowCount).To(Equal(expRowCount))
 }
 
+func expectRowCountInDb(db *sql.DB, source string, expErr bool, expRowCount int, expVal int64) {
+	GinkgoHelper()
+	log.Printf("expectRowCountInDb: expErr=%v, expRowCount=%d, expVal=%d", expErr, expRowCount, expVal)
+	r, err := db.Query(fmt.Sprintf("SELECT COUNT(*) FROM test WHERE csource = '%s' AND cnum = %d", source, expVal))
+	if expErr {
+		Expect(err).To(HaveOccurred(), fmt.Sprintf("expectRowCountInDb: expect error reading from table test"))
+	} else {
+		Expect(err).ToNot(HaveOccurred(), fmt.Sprintf("expectRowCountInDb: error reading from table test: %v", err))
+	}
+	if !r.Next() {
+		Expect(r.Err()).ToNot(HaveOccurred(), fmt.Sprintf("expectRowCountInDb: cursor iteration err: %v", r.Err()))
+	} else {
+		var gotRowCount int
+		err = r.Scan(&gotRowCount)
+		Expect(err).ToNot(HaveOccurred(), fmt.Sprintf("expectRowCountInDb: error calling r.Scan(): %v", err))
+		Expect(gotRowCount).To(Equal(expRowCount))
+	}
+}
+
+// TODO: expectConnCountInDb is not reliable, pg_stat_activity connections fluctuates
+func expectConnCountInDb(db *sql.DB, expConnCount int) {
+	GinkgoHelper()
+	log.Printf("expectConnCountInDb: expConnCount=%d", expConnCount)
+	r, err := db.Query(fmt.Sprintf("SELECT datname, usename, application_name, client_addr, state, backend_type, query FROM pg_stat_activity WHERE client_addr IS NOT NULL"))
+	Expect(err).ToNot(HaveOccurred(), fmt.Sprintf("expectConnCountInDb: error reading from table pg_stat_activity: %v", err))
+	gotConnCount := 0
+	for r.Next() {
+		gotConnCount++
+		var datname string
+		var usename string
+		var application_name string
+		var client_addr string
+		var state string
+		var backend_type string
+		var query string
+		err = r.Scan(&datname, &usename, &application_name, &client_addr, &state, &backend_type, &query)
+		Expect(err).ToNot(HaveOccurred(), fmt.Sprintf("expectConnCountInDb: error calling r.Scan(): %v", err))
+		log.Printf("pg_stat_activity: datname='%s', usename='%s', app_name='%s', client_addr='%s', state='%s', backend_type='%s', query='%s'",
+			datname, usename, application_name, client_addr, state, backend_type, query)
+	}
+	Expect(r.Err()).ToNot(HaveOccurred(), fmt.Sprintf("expectConnCountInDb: cursor iteration err: %v", r.Err()))
+	Expect(gotConnCount).To(Equal(expConnCount))
+}
+
 func expectModTime(modPath string, prevModTime time.Time) time.Time {
+	GinkgoHelper()
 	nextModTime := prevModTime
 
 	// Get modPath modtime
@@ -155,7 +204,7 @@ var _ = BeforeSuite(func(ctx context.Context) {
 	mtmCtx, mtmCancelCtxFn = context.WithCancel(context.Background())
 	mtm = modtime.NewModTimeMonitor(mtmCtx,
 		// note the check-interval must be shorter than the sleep interval in setDSN()
-		modtime.WithCheckInterval(100*time.Millisecond),
+		modtime.WithCheckInterval(setDSNSleepDur/3),
 		modtime.WithLogger(testLogger),
 	)
 	mtm.AddMonitoredPath(fsnotifyStrategy, configPath)
@@ -181,6 +230,8 @@ var _ = AfterSuite(func(ctx context.Context) {
 	if err != nil {
 		log.Printf("AfterSuite: error dropping test table in hlt1: %v", err)
 	}
+
+	//expectConnCountInDb(hlt, 3)
 }, NodeTimeout(240*time.Second))
 
 var _ = Describe("hotload integration tests - sanity", Serial, func() {

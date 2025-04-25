@@ -1,11 +1,12 @@
 version: '3.8'
 
+# postgres configuration mimics helm postgres configured in ../helm/hotload-integration-tests/values.yaml
 services:
   db:
-    image: postgres:16.8
+    image: postgres:10.3
     environment:
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=test
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=hldatabase
     ports:
       - '5432:5432'
@@ -13,4 +14,4 @@ services:
       # https://github.com/felipewom/docker-compose-postgres
       # https://geshan.com.np/blog/2021/12/docker-postgres/
       # https://github.com/docker-library/docs/tree/master/postgres#initialization-scripts
-      - ./create_test_tables.sql:/docker-entrypoint-initdb.d/create_test_tables.sql
+      - ./intgtest_init.sql:/docker-entrypoint-initdb.d/intgtest_init.sql
