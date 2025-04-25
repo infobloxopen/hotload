@@ -86,21 +86,32 @@ func newManagedConn(ctx context.Context, dsn, redactDsn string, conn driver.Conn
 }
 
 func (c *managedConn) Exec(query string, args []driver.Value) (driver.Result, error) {
-	conn, ok := c.conn.(driver.Execer)
+	c.logf("managedConn.Exec", "Exec")
+	conn, ok := c.conn.(driver.ExecerContext)
 	if !ok {
 		return nil, driver.ErrSkip
 	}
+	namedArgs := make([]driver.NamedValue, len(args), len(args))
+	for i := 0; i < len(args); i++ {
+		namedArgs[i].Name = ""
+		namedArgs[i].Ordinal = i
+		namedArgs[i].Value = args[i]
+	}
 	c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
-	return conn.Exec(query, args)
+	c.logf("managedConn.Exec", "calling underlying conn.ExecContext()")
+	return conn.ExecContext(c.ctx, query, namedArgs)
 }
 
 func (c *managedConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	c.logf("managedConn.ExecContext", "ExecContext")
 	conn, ok := c.conn.(driver.ExecerContext)
 	if !ok {
 		return nil, driver.ErrSkip
 	}
 	c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
-	return conn.ExecContext(ctx, query, args)
+	c.logf("managedConn.ExecContext", "calling underlying conn.ExecContext()")
+	//return conn.ExecContext(ctx, query, args)
+	return conn.ExecContext(c.ctx, query, args) // TODO: how do we merge the caller's context?
 }
 
 func (c *managedConn) CheckNamedValue(namedValue *driver.NamedValue) error {
@@ -112,21 +123,32 @@ func (c *managedConn) CheckNamedValue(namedValue *driver.NamedValue) error {
 }
 
 func (c *managedConn) Query(query string, args []driver.Value) (driver.Rows, error) {
-	conn, ok := c.conn.(driver.Queryer)
+	c.logf("managedConn.Query", "Query")
+	conn, ok := c.conn.(driver.QueryerContext)
 	if !ok {
 		return nil, driver.ErrSkip
 	}
+	namedArgs := make([]driver.NamedValue, len(args), len(args))
+	for i := 0; i < len(args); i++ {
+		namedArgs[i].Name = ""
+		namedArgs[i].Ordinal = i
+		namedArgs[i].Value = args[i]
+	}
 	c.incQueryStmtsCounter() //increment the query counter to keep track of the number of query calls
-	return conn.Query(query, args)
+	c.logf("managedConn.Query", "calling underlying conn.QueryContext()")
+	return conn.QueryContext(c.ctx, query, namedArgs)
 }
 
 func (c *managedConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	c.logf("managedConn.QueryContext", "QueryContext")
 	conn, ok := c.conn.(driver.QueryerContext)
 	if !ok {
 		return nil, driver.ErrSkip
 	}
 	c.incQueryStmtsCounter() //increment the query counter to keep track of the number of query calls
-	return conn.QueryContext(ctx, query, args)
+	c.logf("managedConn.QueryContext", "calling underlying conn.QueryContext()")
+	//return conn.QueryContext(ctx, query, args)
+	return conn.QueryContext(c.ctx, query, args) // TODO: how do we merge the caller's context?
 }
 
 func (c *managedConn) Prepare(query string) (driver.Stmt, error) {
@@ -136,6 +158,7 @@ func (c *managedConn) Prepare(query string) (driver.Stmt, error) {
 		return nil, driver.ErrBadConn
 	default:
 	}
+	c.logf("managedConn", "Prepare")
 	return c.conn.Prepare(query)
 }
 
