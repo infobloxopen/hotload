@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/infobloxopen/hotload/logger"
+	"github.com/teivah/onecontext"
 )
 
 // managedConn wraps a sql/driver.Conn so that it can be closed by
@@ -86,21 +87,41 @@ func newManagedConn(ctx context.Context, dsn, redactDsn string, conn driver.Conn
 }
 
 func (c *managedConn) Exec(query string, args []driver.Value) (driver.Result, error) {
-	conn, ok := c.conn.(driver.Execer)
-	if !ok {
-		return nil, driver.ErrSkip
+	c.logf("managedConn.Exec", "Exec")
+
+	connCtx, ok := c.conn.(driver.ExecerContext)
+	if ok {
+		namedArgs := make([]driver.NamedValue, len(args), len(args))
+		for i := 0; i < len(args); i++ {
+			namedArgs[i].Name = ""
+			namedArgs[i].Ordinal = i
+			namedArgs[i].Value = args[i]
+		}
+		c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
+		c.logf("managedConn.Exec", "calling underlying conn.ExecContext()")
+		return connCtx.ExecContext(c.ctx, query, namedArgs)
 	}
-	c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
-	return conn.Exec(query, args)
+
+	connExr, ok := c.conn.(driver.Execer)
+	if ok {
+		c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
+		c.logf("managedConn.Exec", "calling underlying conn.Exec()")
+		return connExr.Exec(query, args)
+	}
+
+	return nil, driver.ErrSkip
 }
 
 func (c *managedConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	c.logf("managedConn.ExecContext", "ExecContext")
 	conn, ok := c.conn.(driver.ExecerContext)
 	if !ok {
 		return nil, driver.ErrSkip
 	}
 	c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
-	return conn.ExecContext(ctx, query, args)
+	c.logf("managedConn.ExecContext", "calling underlying conn.ExecContext()")
+	mergedCtx, _ := onecontext.Merge(c.ctx, ctx)
+	return conn.ExecContext(mergedCtx, query, args)
 }
 
 func (c *managedConn) CheckNamedValue(namedValue *driver.NamedValue) error {
@@ -112,30 +133,58 @@ func (c *managedConn) CheckNamedValue(namedValue *driver.NamedValue) error {
 }
 
 func (c *managedConn) Query(query string, args []driver.Value) (driver.Rows, error) {
-	conn, ok := c.conn.(driver.Queryer)
-	if !ok {
-		return nil, driver.ErrSkip
+	c.logf("managedConn.Query", "Query")
+
+	connCtx, ok := c.conn.(driver.QueryerContext)
+	if ok {
+		namedArgs := make([]driver.NamedValue, len(args), len(args))
+		for i := 0; i < len(args); i++ {
+			namedArgs[i].Name = ""
+			namedArgs[i].Ordinal = i
+			namedArgs[i].Value = args[i]
+		}
+		c.incQueryStmtsCounter() //increment the query counter to keep track of the number of query calls
+		c.logf("managedConn.Query", "calling underlying conn.QueryContext()")
+		return connCtx.QueryContext(c.ctx, query, namedArgs)
 	}
-	c.incQueryStmtsCounter() //increment the query counter to keep track of the number of query calls
-	return conn.Query(query, args)
+
+	connQyr, ok := c.conn.(driver.Queryer)
+	if ok {
+		namedArgs := make([]driver.NamedValue, len(args), len(args))
+		for i := 0; i < len(args); i++ {
+			namedArgs[i].Name = ""
+			namedArgs[i].Ordinal = i
+			namedArgs[i].Value = args[i]
+		}
+		c.incQueryStmtsCounter() //increment the query counter to keep track of the number of query calls
+		c.logf("managedConn.Query", "calling underlying conn.Query()")
+		return connQyr.Query(query, args)
+	}
+
+	return nil, driver.ErrSkip
 }
 
 func (c *managedConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	c.logf("managedConn.QueryContext", "QueryContext")
 	conn, ok := c.conn.(driver.QueryerContext)
 	if !ok {
 		return nil, driver.ErrSkip
 	}
 	c.incQueryStmtsCounter() //increment the query counter to keep track of the number of query calls
-	return conn.QueryContext(ctx, query, args)
+	c.logf("managedConn.QueryContext", "calling underlying conn.QueryContext()")
+	mergedCtx, _ := onecontext.Merge(c.ctx, ctx)
+	return conn.QueryContext(mergedCtx, query, args)
 }
 
 func (c *managedConn) Prepare(query string) (driver.Stmt, error) {
 	select {
 	case <-c.ctx.Done():
+		c.logf("managedConn.Prepare", "ctx done, calling close()")
 		c.close()
 		return nil, driver.ErrBadConn
 	default:
 	}
+	c.logf("managedConn.Prepare", "calling underlying Prepare()")
 	return c.conn.Prepare(query)
 }
 
@@ -154,6 +203,7 @@ func (c *managedConn) Begin() (driver.Tx, error) {
 func (c *managedConn) IsValid() bool {
 	select {
 	case <-c.ctx.Done():
+		c.logf("managedConn.IsValid", "ctx done, calling close()")
 		c.close()
 		return false
 	default:
@@ -162,11 +212,13 @@ func (c *managedConn) IsValid() bool {
 	if !ok {
 		return true
 	}
+	c.logf("managedConn.IsValid", "calling underlying IsValid()")
 	return s.IsValid()
 }
 
 func (c *managedConn) ResetSession(ctx context.Context) error {
 	if c.GetReset() {
+		c.logf("managedConn.ResetSession", "already reset")
 		return driver.ErrBadConn
 	}
 
@@ -175,6 +227,7 @@ func (c *managedConn) ResetSession(ctx context.Context) error {
 		return nil
 	}
 
+	c.logf("managedConn.ResetSession", "calling underlying ResetSession()")
 	return s.ResetSession(ctx)
 }
 
@@ -186,7 +239,7 @@ func (c *managedConn) Close() error {
 	if err == nil {
 		c.killed = true
 	}
-	c.logf("managedConn", "closed")
+	c.logf("managedConn.Close", "closed")
 
 	return err
 }
@@ -195,12 +248,14 @@ func (c *managedConn) close() error {
 	if c.afterClose != nil {
 		defer c.afterClose(c)
 	}
+	c.logf("managedConn.close", "calling underlying Close()")
 	return c.conn.Close()
 }
 
 func (c *managedConn) GetReset() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	c.logf("managedConn.GetReset", "reset=%v", c.reset)
 	return c.reset
 }
 
@@ -214,6 +269,7 @@ func (c *managedConn) Reset(v bool) {
 func (c *managedConn) GetKill() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	c.logf("managedConn.GetKill", "killed=%v", c.killed)
 	return c.killed
 }
 

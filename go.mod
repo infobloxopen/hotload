@@ -12,6 +12,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.20.0
 	github.com/prometheus/common v0.55.0
+	github.com/teivah/onecontext v1.3.0
 )
 
 require (

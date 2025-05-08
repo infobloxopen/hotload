@@ -14,6 +14,7 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+# postgres configuration mimics docker postgres configured in ../docker/docker-compose.yaml
 postgresql:
   livenessProbe:
     initialDelaySeconds: 10
@@ -22,10 +23,12 @@ postgresql:
   postgresqlPassword: test
   postgresqlDatabase: hldatabase
   postgresqlUsername: admin
-  postgresqlPostgresPassword: test
+  postgresqlPostgresPassword: postgres
   persistence:
     enabled: false
   initdbScripts:
     init.sql: |
       CREATE DATABASE hotload_test;
       CREATE DATABASE hotload_test1;
+      GRANT ALL PRIVILEGES ON DATABASE hotload_test TO admin;
+      GRANT ALL PRIVILEGES ON DATABASE hotload_test1 TO admin;

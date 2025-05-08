@@ -17,12 +17,16 @@ type managedTx struct {
 }
 
 func (t *managedTx) Commit() error {
+	var log = logger.GetLogger()
+	log("managedTx.Commit")
 	err := t.tx.Commit()
 	t.cleanup()
 	return err
 }
 
 func (t *managedTx) Rollback() error {
+	var log = logger.GetLogger()
+	log("managedTx.Rollback")
 	err := t.tx.Rollback()
 	t.cleanup()
 	return err
