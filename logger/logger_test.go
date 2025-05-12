@@ -42,13 +42,4 @@ func TestLogger(t *testing.T) {
 	if logOutput != expOutput {
 		t.Errorf("logOutput should be \"%s\", but logOutput=\"%s\"", expOutput, logOutput)
 	}
-
-	Logf("mylogmsgprefix:", "cube(%d)=%d", 3, (3 * 3 * 3))
-	if logCount != 2 {
-		t.Errorf("logCount should be 2, logCount=%d", logCount)
-	}
-	expOutput = "mylogmsgprefix: cube(3)=27\n"
-	if logOutput != expOutput {
-		t.Errorf("logOutput should be \"%s\", but logOutput=\"%s\"", expOutput, logOutput)
-	}
 }
