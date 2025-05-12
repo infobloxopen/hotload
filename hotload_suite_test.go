@@ -5,20 +5,19 @@ import (
 	"testing"
 
 	"github.com/infobloxopen/hotload/internal"
-	"github.com/infobloxopen/hotload/logger"
+	hlogger "github.com/infobloxopen/hotload/logger"
+	stdlog "github.com/infobloxopen/hotload/logger/standardlog"
 
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
-func testLogger(args ...any) {
-	log.Println(args...)
-}
-
 func TestHotload(t *testing.T) {
+	//log.SetFlags(log.Flags() | log.Lmicroseconds)
+	log.SetFlags(log.Ltime | log.Lmicroseconds)
 	log.SetOutput(GinkgoWriter)
-	logger.WithLogger(testLogger)
+	hlogger.SetDefaultLevelLogger(stdlog.NewStdLogLevelLogger(log.Default(), stdlog.LevelDebug))
 
 	nrr := internal.NewNonRandomReader(1)
 	uuid.SetRand(nrr)

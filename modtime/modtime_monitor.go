@@ -23,7 +23,7 @@ var (
 // ModTimeMonitor monitors the modtimes for a set of paths in a filesystem
 type ModTimeMonitor struct {
 	sync.RWMutex // used to synchronize changes to the set of paths being monitored
-	log          logger.Logger
+	log          logger.LevelLogger
 	statFS       fs.StatFS // use io/fs.FS so we can mock FileSystem for unit-tests
 	checkIntv    time.Duration
 	paths        map[pathKey]*pathRecord
@@ -139,6 +139,8 @@ func (mtm *ModTimeMonitor) checkPathModTimes(ctx context.Context, nowTime time.T
 	defer mtm.RUnlock()
 
 	for pkey, pathRec := range mtm.paths {
+		llog := mtm.log.WithKV("method", "checkPathModTimes", "path", pkey)
+
 		// When using fs.FS, paths must be unrooted
 		// See https://github.com/golang/go/issues/44279#issuecomment-956251702
 		// See https://pkg.go.dev/io/fs#ValidPath
@@ -146,10 +148,10 @@ func (mtm *ModTimeMonitor) checkPathModTimes(ctx context.Context, nowTime time.T
 		fInfo, err := mtm.statFS.Stat(unrooted)
 		if err != nil {
 			// log error, but continue
-			mtm.log(fmt.Sprintf("checkPathModTimes: Stat(%s) err=%s", pkey, err))
+			llog.ErrorKV(err, "Stat")
 		} else {
 			newTime := fInfo.ModTime()
-			mtm.log(fmt.Sprintf("checkPathModTimes: Stat(%s) ModTime=%s", pkey, newTime))
+			llog.DebugKV("Stat", "ModTime", newTime)
 			pathRec.modTime.Store(newTime)
 		}
 
@@ -163,7 +165,8 @@ func (mtm *ModTimeMonitor) checkPathModTimes(ctx context.Context, nowTime time.T
 // periodically checks its paths' modtimes in a loop.
 // Terminated when context is done (canceled).
 func (mtm *ModTimeMonitor) runLoop(ctx context.Context) {
-	mtm.log("ModTimeMonitor.runLoop: started")
+	llog := mtm.log.WithKV("method", "ModTimeMonitor.runLoop")
+	llog.InfoKV("started")
 
 	checkTicker := time.NewTicker(mtm.checkIntv)
 	defer checkTicker.Stop()
@@ -180,7 +183,7 @@ loop:
 		}
 	}
 
-	mtm.log("ModTimeMonitor.runLoop: terminated")
+	llog.InfoKV("terminated")
 }
 
 // CleanPath cleans and trimspaces path strings

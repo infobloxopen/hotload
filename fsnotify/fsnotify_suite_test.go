@@ -4,20 +4,17 @@ import (
 	"log"
 	"testing"
 
-	"github.com/infobloxopen/hotload/logger"
+	hlogger "github.com/infobloxopen/hotload/logger"
+	stdlog "github.com/infobloxopen/hotload/logger/standardlog"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
-
-func testLogger(args ...any) {
-	log.Println(args...)
-}
 
 func TestFsnotify(t *testing.T) {
 	//log.SetFlags(log.Flags() | log.Lmicroseconds)
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
 	log.SetOutput(GinkgoWriter)
-	logger.WithLogger(testLogger)
+	hlogger.SetDefaultLevelLogger(stdlog.NewStdLogLevelLogger(log.Default(), stdlog.LevelDebug))
 
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Fsnotify Suite")

@@ -8,7 +8,8 @@ import (
 	"testing"
 
 	"github.com/infobloxopen/hotload/internal"
-	"github.com/infobloxopen/hotload/logger"
+	hlogger "github.com/infobloxopen/hotload/logger"
+	stdlog "github.com/infobloxopen/hotload/logger/standardlog"
 
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
@@ -41,15 +42,11 @@ func hldatabasePassDsn(which int) string {
 		testDbUser, testDbPass(which), postgresHost, postgresPort)
 }
 
-func testLogger(args ...any) {
-	log.Println(args...)
-}
-
 func TestIntegrationtests(t *testing.T) {
 	//log.SetFlags(log.Flags() | log.Lmicroseconds)
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
 	log.SetOutput(GinkgoWriter)
-	logger.WithLogger(testLogger)
+	hlogger.SetDefaultLevelLogger(stdlog.NewStdLogLevelLogger(log.Default(), stdlog.LevelDebug))
 
 	nrr := internal.NewNonRandomReader(1)
 	uuid.SetRand(nrr)

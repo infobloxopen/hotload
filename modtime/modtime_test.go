@@ -11,6 +11,7 @@ import (
 	"time"
 
 	internal "github.com/infobloxopen/hotload/internal"
+	stdlog "github.com/infobloxopen/hotload/logger/standardlog"
 	"github.com/infobloxopen/hotload/metrics"
 )
 
@@ -26,11 +27,10 @@ func TestAgainstUnixFS(t *testing.T) {
 	metrics.ResetCollectors()
 
 	// Create ModTimeMonitor that monitors the (default) real host Unix FS
+	log.SetFlags(log.Ltime | log.Lmicroseconds)
 	mtm := NewModTimeMonitor(ctx,
 		WithCheckInterval(time.Millisecond*200),
-		WithLogger(func(args ...any) {
-			log.Println(args...)
-		}),
+		WithLevelLogger(stdlog.NewStdLogLevelLogger(log.Default(), stdlog.LevelDebug)),
 	)
 
 	// Add well-known Unix path to monitor the mod-time of
@@ -78,12 +78,11 @@ func TestAgainstMapFS(t *testing.T) {
 	checkIntv := time.Millisecond * 1000
 
 	// Create ModTimeMonitor that monitors mock FS
+	log.SetFlags(log.Ltime | log.Lmicroseconds)
 	mtm := NewModTimeMonitor(ctx,
 		WithStatFS(mfs),
 		WithCheckInterval(checkIntv),
-		WithLogger(func(args ...any) {
-			log.Println(args...)
-		}),
+		WithLevelLogger(stdlog.NewStdLogLevelLogger(log.Default(), stdlog.LevelDebug)),
 	)
 
 	// Add mock path to monitor the mod-time of.
@@ -207,16 +206,16 @@ func TestConcurrency(t *testing.T) {
 	}
 
 	// Create ModTimeMonitor that monitors mock FS
+	log.SetFlags(log.Ltime | log.Lmicroseconds)
 	mtm := NewModTimeMonitor(context.Background(),
 		WithStatFS(mfs),
 		WithCheckInterval(commonIntv),
-		WithLogger(func(args ...any) {
-			log.Println(args...)
-		}),
+		WithLevelLogger(stdlog.NewStdLogLevelLogger(log.Default(), stdlog.LevelDebug)),
 	)
 
 	modTimeUpdaterLoop := func(ctx context.Context, t *testing.T, pathStr string, updateIntv time.Duration) {
-		mtm.log(fmt.Sprintf("modTimeUpdaterLoop(%s) started", pathStr))
+		llog := mtm.log.WithKV("method", "modTimeUpdaterLoop", "path", pathStr)
+		llog.InfoKV("started")
 		updateTicker := time.NewTicker(updateIntv)
 		defer updateTicker.Stop()
 	loop:
@@ -234,11 +233,12 @@ func TestConcurrency(t *testing.T) {
 				}
 			}
 		}
-		mtm.log(fmt.Sprintf("modTimeUpdaterLoop(%s) terminated", pathStr))
+		llog.InfoKV("terminated")
 	}
 
 	modTimeReaderLoop := func(ctx context.Context, t *testing.T, pathStr string, readIntv time.Duration) {
-		mtm.log(fmt.Sprintf("modTimeReaderLoop(%s) started", pathStr))
+		llog := mtm.log.WithKV("method", "modTimeReaderLoop", "path", pathStr)
+		llog.InfoKV("started")
 		readTicker := time.NewTicker(readIntv)
 		defer readTicker.Stop()
 	loop:
@@ -255,7 +255,7 @@ func TestConcurrency(t *testing.T) {
 				}
 			}
 		}
-		mtm.log(fmt.Sprintf("modTimeReaderLoop(%s) terminated", pathStr))
+		llog.InfoKV("terminated")
 	}
 
 	// Add paths to monitor
