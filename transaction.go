@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 
-	"github.com/infobloxopen/hotload/logger"
+	hlogger "github.com/infobloxopen/hotload/logger"
 	"github.com/infobloxopen/hotload/metrics"
 )
 
@@ -17,16 +17,14 @@ type managedTx struct {
 }
 
 func (t *managedTx) Commit() error {
-	var log = logger.GetLogger()
-	log("managedTx.Commit")
+	hlogger.DebugKV("managedTx.Commit")
 	err := t.tx.Commit()
 	t.cleanup()
 	return err
 }
 
 func (t *managedTx) Rollback() error {
-	var log = logger.GetLogger()
-	log("managedTx.Rollback")
+	hlogger.DebugKV("managedTx.Rollback")
 	err := t.tx.Rollback()
 	t.cleanup()
 	return err
@@ -52,29 +50,27 @@ type promLabelKeyType struct{}
 var promLabelKey = promLabelKeyType{}
 
 func ContextWithExecLabels(ctx context.Context, labels map[string]string) context.Context {
-	var log = logger.GetLogger()
 	if labels == nil {
-		log("ContextWithExecLabels called with nil label set")
+		hlogger.WarnKV("ContextWithExecLabels called with nil label set")
 		return ctx
 	}
 	return context.WithValue(ctx, promLabelKey, labels)
 }
 
 func GetExecLabelsFromContext(ctx context.Context) map[string]string {
-	var log = logger.GetLogger()
 	if ctx == nil {
-		log("No context provided, returning")
+		hlogger.WarnKV("No context provided, returning nil")
 		return nil
 	}
 
 	value := ctx.Value(promLabelKey)
 	if value == nil {
-		log("No value for promLabelKey, returning")
+		hlogger.WarnKV("No value for promLabelKey, returning nil")
 		return nil
 	}
 	labelMap, ok := value.(map[string]string)
 	if !ok {
-		log("Bad value type used for promLabelKey, conversion error")
+		hlogger.WarnKV("Bad value type used for promLabelKey, conversion error")
 		return nil
 	}
 

@@ -57,7 +57,7 @@ import (
 	"time"
 
 	"github.com/infobloxopen/hotload/internal"
-	"github.com/infobloxopen/hotload/logger"
+	hlogger "github.com/infobloxopen/hotload/logger"
 )
 
 // Strategy is the plugin interface for hotload.
@@ -221,17 +221,18 @@ type chanGroup struct {
 
 // monitor the location for changes
 func (cg *chanGroup) runLoop() {
+	llog := hlogger.WithKV("method", "hotload.chanGroup.runLoop", "name", cg.name)
 	for {
-		cg.logf("chanGroup.runLoop", "select waiting...")
+		llog.DebugKV("select waiting...")
 		select {
 		case <-cg.parentCtx.Done():
 			cg.cancel()
-			cg.logf("chanGroup.runLoop", "parent context done, canceled chanGroup context, terminating")
+			llog.DebugKV("parent context done, canceled chanGroup context, terminating")
 			return
 
 		case newValue, ok := <-cg.newValChan:
 			if !ok {
-				cg.logf("chanGroup.runLoop", "newValChan closed, terminating")
+				llog.DebugKV("newValChan closed, terminating")
 				return
 			}
 			cg.processNewValue(newValue)
@@ -240,6 +241,8 @@ func (cg *chanGroup) runLoop() {
 }
 
 func (cg *chanGroup) processNewValue(newValue string) {
+	llog := hlogger.WithKV("method", "hotload.chanGroup.processNewValue", "name", cg.name)
+
 	type oldInfo struct {
 		changedFlag       bool
 		prevPrevCancel    context.CancelFunc
@@ -258,15 +261,14 @@ func (cg *chanGroup) processNewValue(newValue string) {
 		prevRedactVal := cg.redactVal
 
 		newRedactVal := internal.RedactUrl(newValue)
-		cg.logf("chanGroup.processNewValue", "old conn dsn: '%s'", prevRedactVal)
-		cg.logf("chanGroup.processNewValue", "new conn dsn: '%s'", newRedactVal)
+		dllog := llog.WithKV("old", prevRedactVal, "new", newRedactVal)
 
 		if newValue == prevValue {
 			// next update is the same, just ignore it
-			cg.logf("chanGroup.processNewValue", "conn dsn not changed")
+			dllog.InfoKV("ignoring update, conn dsn not changed")
 			return oldInfo{}
 		}
-		cg.logf("chanGroup.processNewValue", "conn dsn changed")
+		dllog.InfoKV("conn dsn changed")
 
 		result := oldInfo{
 			changedFlag:       true,
@@ -312,14 +314,14 @@ func (cg *chanGroup) processNewValue(newValue string) {
 		// Immediately cancel the previous dsn
 		if prev.prevCancel != nil {
 			prev.prevCancel()
-			cg.logf("chanGroup.processNewValue", "canceled context for previous dsn: '%s'", prev.prevRedactVal)
+			llog.InfoKV("canceled context for previous dsn", "prevDsn", prev.prevRedactVal)
 		}
 	} else {
 		// Immediately cancel the previous-previous dsn.
 		// We let the previous dsn to gracefully continue until the next dsn-change.
 		if prev.prevPrevCancel != nil {
 			prev.prevPrevCancel()
-			cg.logf("chanGroup.processNewValue", "canceled context for previous-previous dsn: '%s'", prev.prevPrevRedactVal)
+			llog.InfoKV("canceled context for previous-previous dsn", "prevPrevDsn", prev.prevPrevRedactVal)
 		}
 	}
 
@@ -337,7 +339,7 @@ func (cg *chanGroup) processNewValue(newValue string) {
 	// which tries to lock mutex.
 	if cg.forceKill {
 		// Immediately reset/close previous conns
-		cg.logf("chanGroup.processNewValue", "reset/close conns for previous dsn: '%s'", prev.prevRedactVal)
+		llog.InfoKV("reset/close conns for previous dsn", "prevDsn", prev.prevRedactVal)
 		for _, c := range prev.prevConns {
 			c.Reset(true)
 			// ignore errors from close
@@ -346,7 +348,7 @@ func (cg *chanGroup) processNewValue(newValue string) {
 	} else {
 		// Immediately close previous-previous conns.
 		// We let the previous conns to gracefully continue until the next dsn-change.
-		cg.logf("chanGroup.processNewValue", "close conns for previous-previous dsn: '%s'", prev.prevPrevRedactVal)
+		llog.InfoKV("close conns for previous-previous dsn", "prevPrevDsn", prev.prevPrevRedactVal)
 		for _, c := range prev.prevPrevConns {
 			// ignore errors from close
 			c.Close()
@@ -354,7 +356,7 @@ func (cg *chanGroup) processNewValue(newValue string) {
 
 		// Immediately reset (but do not close) previous conns.
 		// We let the previous conns to gracefully continue until the next dsn-change.
-		cg.logf("chanGroup.processNewValue", "reset conns for previous dsn: '%s'", prev.prevPrevRedactVal)
+		llog.InfoKV("reset conns for previous dsn", "prevDsn", prev.prevRedactVal)
 		for _, c := range prev.prevConns {
 			c.Reset(true)
 		}
@@ -395,7 +397,8 @@ func (cg *chanGroup) Open() (driver.Conn, error) {
 
 	manConn := newManagedConn(cg.ctx, dsn, redactDsn, conn, cg.removeMgdConn)
 	cg.conns = append(cg.conns, manConn)
-	cg.logf("chanGroup.Open", "opened managed conn: '%s'", manConn.redactDsn)
+	hlogger.InfoKV("opened managed conn", "method", "hotload.chanGroup.Open",
+		"name", cg.name, "redactDsn", manConn.redactDsn)
 
 	return manConn, nil
 }
@@ -406,19 +409,21 @@ func (cg *chanGroup) removeMgdConn(conn *managedConn) {
 	for i, c := range cg.conns {
 		if c == conn {
 			cg.conns = append(cg.conns[:i], cg.conns[i+1:]...)
-			cg.logf("chanGroup.removeMgdConn", "%d: removed: '%s'", i, conn.redactDsn)
+			hlogger.InfoKV("removed managed conn", "method", "hotload.chanGroup.removeMgdConn",
+				"name", cg.name, "redactDsn", c.redactDsn, "i", i)
 			return
 		}
 	}
 }
 
 func (cg *chanGroup) parseUrlValues(vs url.Values) {
-	cg.logf("chanGroup.parseUrlValues", "values: %s", vs)
+	llog := hlogger.WithKV("method", "hotload.chanGroup.parseUrlValues", "name", cg.name)
+	llog.DebugKV("parseUrlValues", "values", vs)
 	v, ok := vs[forceKill]
 	if ok && len(v) > 0 {
 		firstValue := v[0]
 		cg.forceKill = firstValue == "true"
-		cg.logf("chanGroup.parseUrlValues", "forceKill set to true")
+		llog.InfoKV("set forceKill", "forceKill", cg.forceKill)
 	}
 }
 
@@ -460,28 +465,18 @@ func (h *hdriver) Open(name string) (driver.Conn, error) {
 		}
 		cgroup.parseUrlValues(queryParams)
 		h.cgroup[name] = cgroup
-		h.logf("hotload", "new chanGroup: '%s'", name)
+		hlogger.InfoKV("new chanGroup", "method", "hotload.hdriver.Open", "name", name)
 		go cgroup.runLoop()
 	}
 	return cgroup.Open()
 }
 
-func (h *hdriver) logf(prefix, format string, args ...any) {
-	logPrefix := fmt.Sprintf("%s:", prefix)
-	logger.Logf(logPrefix, format, args...)
-}
-
-func (cg *chanGroup) logf(prefix, format string, args ...any) {
-	logPrefix := fmt.Sprintf("%s[%s]:", prefix, cg.name)
-	logger.Logf(logPrefix, format, args...)
-}
-
 // Deprecated: Use logger.WithLogger() instead, retained for backwards-compatibility only
-func WithLogger(l logger.Logger) {
-	logger.WithLogger(l)
+func WithLogger(l hlogger.Logger) {
+	hlogger.WithLogger(l)
 }
 
 // Deprecated: Use logger.GetLogger() instead, retained for backwards-compatibility only
-func GetLogger() logger.Logger {
-	return logger.GetLogger()
+func GetLogger() hlogger.Logger {
+	return hlogger.GetLogger()
 }

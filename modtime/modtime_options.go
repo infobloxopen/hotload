@@ -18,7 +18,7 @@ var (
 )
 
 type mtmOptions struct {
-	log       logger.Logger
+	log       logger.LevelLogger
 	statFS    fs.StatFS
 	checkIntv time.Duration
 }
@@ -27,7 +27,7 @@ type Option func(*mtmOptions)
 
 func newDefaultOptions() *mtmOptions {
 	opts := &mtmOptions{
-		log:       logger.GetLogger(),
+		log:       logger.GetDefaultLevelLogger(),
 		statFS:    DefaultStatFS,
 		checkIntv: DefaultCheckInterval,
 	}
@@ -35,13 +35,23 @@ func newDefaultOptions() *mtmOptions {
 }
 
 // WithLogger is the option to set the Logger
+// Deprecated: Use WithLevelLogger instead (internally all hotload logging now uses LevelLogger)
 func WithLogger(log logger.Logger) Option {
 	return func(opts *mtmOptions) {
 		if log == nil {
-			opts.log = logger.GetLogger()
-		} else {
-			opts.log = log
+			log = logger.GetLogger()
 		}
+		opts.log = logger.NewV1LevelLogger(log)
+	}
+}
+
+// WithLevelLogger is the option to set the LevelLogger
+func WithLevelLogger(log logger.LevelLogger) Option {
+	return func(opts *mtmOptions) {
+		if log == nil {
+			log = logger.GetDefaultLevelLogger()
+		}
+		opts.log = log
 	}
 }
 

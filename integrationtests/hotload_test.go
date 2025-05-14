@@ -205,7 +205,6 @@ var _ = BeforeSuite(func(ctx context.Context) {
 	mtm = modtime.NewModTimeMonitor(mtmCtx,
 		// note the check-interval must be shorter than the sleep interval in setDSN()
 		modtime.WithCheckInterval(setDSNSleepDur/3),
-		modtime.WithLogger(testLogger),
 	)
 	mtm.AddMonitoredPath(fsnotifyStrategy, configPath)
 	time.Sleep(200 * time.Millisecond)
