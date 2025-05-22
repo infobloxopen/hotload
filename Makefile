@@ -48,10 +48,8 @@ integ-test-image: .integ-test-image-$(GIT_COMMIT)
 deploy-integration-tests:
 	helm upgrade hotload-integration-tests integrationtests/helm/hotload-integration-tests -i --set image.tag=$(GIT_COMMIT)
 
-# Add CGO_ENABLED=0 to fix this .github/workflows/go.yml build error after upgrading to golang-v1.20:
-# ./integrationtests.test: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.32' not found (required by ./integrationtests.test
 build-test: vet get-ginkgo
-	CGO_ENABLED=0 go test -c ./integrationtests
+	go test -c ./integrationtests
 
 kind-create-cluster:
 	kind create cluster
