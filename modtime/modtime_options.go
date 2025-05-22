@@ -19,6 +19,7 @@ var (
 
 type mtmOptions struct {
 	log       logger.Logger
+	errlog    logger.Logger
 	statFS    fs.StatFS
 	checkIntv time.Duration
 }
@@ -41,6 +42,17 @@ func WithLogger(log logger.Logger) Option {
 			opts.log = logger.GetLogger()
 		} else {
 			opts.log = log
+		}
+	}
+}
+
+// WithErrLogger is the option to set the Logger
+func WithErrLogger(errlog logger.Logger) Option {
+	return func(opts *mtmOptions) {
+		if errlog == nil {
+			opts.errlog = logger.GetErrLogger()
+		} else {
+			opts.errlog = errlog
 		}
 	}
 }

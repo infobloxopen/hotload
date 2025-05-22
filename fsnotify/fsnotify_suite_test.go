@@ -18,6 +18,7 @@ func TestFsnotify(t *testing.T) {
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
 	log.SetOutput(GinkgoWriter)
 	logger.WithLogger(testLogger)
+	logger.WithErrLogger(testLogger)
 
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Fsnotify Suite")

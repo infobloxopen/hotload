@@ -25,12 +25,15 @@ func TestAgainstUnixFS(t *testing.T) {
 
 	metrics.ResetCollectors()
 
+	logfn := func(args ...any) {
+		log.Println(args...)
+	}
+
 	// Create ModTimeMonitor that monitors the (default) real host Unix FS
 	mtm := NewModTimeMonitor(ctx,
 		WithCheckInterval(time.Millisecond*200),
-		WithLogger(func(args ...any) {
-			log.Println(args...)
-		}),
+		WithLogger(logfn),
+		WithErrLogger(logfn),
 	)
 
 	// Add well-known Unix path to monitor the mod-time of

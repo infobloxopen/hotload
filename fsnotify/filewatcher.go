@@ -99,7 +99,7 @@ func (s *Strategy) runLoop() {
 
 			val, err := s.resync(s.watcher, ev.Name)
 			if err != nil {
-				s.logf("fsnotify.runLoop", "resync(%s) err: %v", ev.Name, err)
+				s.errlogf("fsnotify.runLoop", "resync(%s) err: %v", ev.Name, err)
 				failedPaths[ev.Name] = struct{}{}
 				break
 			}
@@ -119,7 +119,7 @@ func (s *Strategy) runLoop() {
 			for pth := range failedPaths {
 				val, err := s.resync(s.watcher, pth)
 				if err != nil {
-					s.logf("fsnotify.runLoop", "resync(%s) err: %v", pth, err)
+					s.errlogf("fsnotify.runLoop", "resync(%s) err: %v", pth, err)
 				} else {
 					fixedPaths = append(fixedPaths, pth)
 					s.setVal(pth, val)
@@ -133,11 +133,10 @@ func (s *Strategy) runLoop() {
 }
 
 func (s *Strategy) setVal(pth string, val string) {
-	log := logger.GetLogger()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.paths[pth]; !ok {
-		log("fsnotify: Path not in map ", pth)
+		s.logf("fsnotify.setVal", "ignoring path not in map: '%s'", pth)
 		return
 	}
 	s.paths[pth].value = val
@@ -248,7 +247,7 @@ func (s *Strategy) processWatchClosure(pendOp pendingOperation) error {
 			if err == nil {
 				s.logf("fsnotify.processWatchClosure", "removed path from being watched '%s'", pendOp.watchPath)
 			} else {
-				s.logf("fsnotify.processWatchClosure", "failed to remove '%s' from watcher, err=%v", pendOp.watchPath, err)
+				s.errlogf("fsnotify.processWatchClosure", "failed to remove '%s' from watcher, err=%v", pendOp.watchPath, err)
 			}
 			delete(s.paths, pendOp.watchPath)
 			s.logf("fsnotify.processWatchClosure", "strategy removed path '%s'", pendOp.watchPath)
@@ -339,4 +338,19 @@ func (pw *pathWatch) logf(prefix, format string, args ...any) {
 func (qw *queryWatch) logf(prefix, format string, args ...any) {
 	logPrefix := fmt.Sprintf("%s[%s?%s]:", prefix, qw.parentPathW.watchPath, qw.pathQuery)
 	logger.Logf(logPrefix, format, args...)
+}
+
+func (s *Strategy) errlogf(prefix, format string, args ...any) {
+	logPrefix := fmt.Sprintf("%s:", prefix)
+	logger.ErrLogf(logPrefix, format, args...)
+}
+
+func (pw *pathWatch) errlogf(prefix, format string, args ...any) {
+	logPrefix := fmt.Sprintf("%s[%s]:", prefix, pw.watchPath)
+	logger.ErrLogf(logPrefix, format, args...)
+}
+
+func (qw *queryWatch) errlogf(prefix, format string, args ...any) {
+	logPrefix := fmt.Sprintf("%s[%s?%s]:", prefix, qw.parentPathW.watchPath, qw.pathQuery)
+	logger.ErrLogf(logPrefix, format, args...)
 }

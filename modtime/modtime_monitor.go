@@ -24,6 +24,7 @@ var (
 type ModTimeMonitor struct {
 	sync.RWMutex // used to synchronize changes to the set of paths being monitored
 	log          logger.Logger
+	errlog       logger.Logger
 	statFS       fs.StatFS // use io/fs.FS so we can mock FileSystem for unit-tests
 	checkIntv    time.Duration
 	paths        map[pathKey]*pathRecord
@@ -63,6 +64,7 @@ func NewModTimeMonitor(ctx context.Context, opts ...Option) *ModTimeMonitor {
 
 	mtm := &ModTimeMonitor{
 		log:       defOpts.log,
+		errlog:    defOpts.errlog,
 		statFS:    defOpts.statFS,
 		checkIntv: defOpts.checkIntv,
 		paths:     make(map[pathKey]*pathRecord),
@@ -146,10 +148,10 @@ func (mtm *ModTimeMonitor) checkPathModTimes(ctx context.Context, nowTime time.T
 		fInfo, err := mtm.statFS.Stat(unrooted)
 		if err != nil {
 			// log error, but continue
-			mtm.log(fmt.Sprintf("checkPathModTimes: Stat(%s) err=%s", pkey, err))
+			mtm.errlogf("checkPathModTimes", "Stat(%s) err=%s", pkey, err)
 		} else {
 			newTime := fInfo.ModTime()
-			mtm.log(fmt.Sprintf("checkPathModTimes: Stat(%s) ModTime=%s", pkey, newTime))
+			mtm.logf("checkPathModTimes", "Stat(%s) ModTime=%s", pkey, newTime)
 			pathRec.modTime.Store(newTime)
 		}
 
@@ -181,6 +183,16 @@ loop:
 	}
 
 	mtm.log("ModTimeMonitor.runLoop: terminated")
+}
+
+func (mtm *ModTimeMonitor) logf(prefix, format string, args ...any) {
+	logMsg := fmt.Sprintf(format, args...)
+	mtm.log(prefix, logMsg)
+}
+
+func (mtm *ModTimeMonitor) errlogf(prefix, format string, args ...any) {
+	logMsg := fmt.Sprintf(format, args...)
+	mtm.errlog(prefix, logMsg)
 }
 
 // CleanPath cleans and trimspaces path strings
