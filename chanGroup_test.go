@@ -3,12 +3,17 @@ package hotload
 import (
 	"context"
 	"database/sql/driver"
+	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/infobloxopen/hotload/metrics"
 )
 
 type testConn struct {
@@ -65,6 +70,7 @@ var _ = DescribeTableSubtree("Driver", Serial, func(forceKill bool) {
 			ctx, cancel = context.WithCancel(pctx)
 			mockw = newMockWatcher()
 			cg = &chanGroup{
+				name:       "fsnotify://postgres/tmp/mydsn.txt",
 				value:      "1st-dsn",
 				newValChan: mockw.getReceiveChan(),
 				parentCtx:  pctx,
@@ -80,6 +86,8 @@ var _ = DescribeTableSubtree("Driver", Serial, func(forceKill bool) {
 				newManagedConn(ctx, cg.value, cg.value, &testConn{}, cg.removeMgdConn),
 			}
 			mgdConns = cg.conns
+
+			metrics.ResetCollectors()
 		}, NodeTimeout(5*time.Second))
 
 		It("Should change value when a value is pushed to the values channel", func(ginkgoCtx context.Context) {
@@ -103,6 +111,12 @@ var _ = DescribeTableSubtree("Driver", Serial, func(forceKill bool) {
 					Expect(mc.conn.(*testConn).closed).To(BeTrue(), "Closed() should have been called on the underlying connection")
 				}
 			}
+
+			// HotloadChangeCounter metric should be incremented
+			err := testutil.CollectAndCompare(metrics.HotloadChangeCounter,
+				strings.NewReader(expectHotloadChangeCounterHelp+
+					fmt.Sprintf(expectHotloadChangeCounterMetric, cg.name, 1)))
+			Expect(err).ShouldNot(HaveOccurred())
 		}, NodeTimeout(5*time.Second))
 
 		It("Should not reset conns when the same value is pushed to the values channel", func(ginkgoCtx context.Context) {
@@ -128,6 +142,11 @@ var _ = DescribeTableSubtree("Driver", Serial, func(forceKill bool) {
 				Expect(mc.GetKill()).To(BeFalse())
 				Expect(mc.conn.(*testConn).closed).To(BeFalse())
 			}
+
+			// HotloadChangeCounter metric should NOT be incremented
+			err := testutil.CollectAndCompare(metrics.HotloadChangeCounter,
+				strings.NewReader(""))
+			Expect(err).ShouldNot(HaveOccurred())
 		}, NodeTimeout(5*time.Second))
 
 		It("Should change value and reset connections", func(ginkgoCtx context.Context) {
@@ -144,9 +163,24 @@ var _ = DescribeTableSubtree("Driver", Serial, func(forceKill bool) {
 					Expect(mc.conn.(*testConn).closed).To(BeTrue(), "Closed() should have been called on the underlying connection")
 				}
 			}
+
+			// HotloadChangeCounter metric should be incremented
+			err := testutil.CollectAndCompare(metrics.HotloadChangeCounter,
+				strings.NewReader(expectHotloadChangeCounterHelp+
+					fmt.Sprintf(expectHotloadChangeCounterMetric, cg.name, 1)))
+			Expect(err).ShouldNot(HaveOccurred())
 		}, NodeTimeout(5*time.Second))
 	})
 },
 	Entry("forceKill=false", false),
 	Entry("forceKill=true", true),
 )
+
+var expectHotloadChangeCounterHelp = `
+# HELP hotload_change_counter Hotload change counter by url
+# TYPE hotload_change_counter counter
+`
+
+var expectHotloadChangeCounterMetric = `
+hotload_change_counter{url="%s"} %d
+`

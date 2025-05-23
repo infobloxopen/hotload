@@ -58,6 +58,7 @@ import (
 
 	"github.com/infobloxopen/hotload/internal"
 	"github.com/infobloxopen/hotload/logger"
+	"github.com/infobloxopen/hotload/metrics"
 )
 
 // Strategy is the plugin interface for hotload.
@@ -304,6 +305,9 @@ func (cg *chanGroup) processNewValue(newValue string) {
 	}
 
 	// Mutex MUST be unlocked at this point before continuing
+
+	// Update change counter metric
+	metrics.IncHotloadChangeCounter(cg.name)
 
 	// Canceling previous ctx can potentially cause other threads
 	// to call managedConn.Close(), which calls managedConn.afterClose(),

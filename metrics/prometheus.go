@@ -13,6 +13,7 @@ const (
 
 	StrategyKey = "strategy"
 	PathKey     = "path"
+	UrlKey      = "url"
 )
 
 // SqlStmtsSummary is a prometheus metric to keep track of the number of times
@@ -28,17 +29,29 @@ var SqlStmtsSummary = prometheus.NewSummaryVec(prometheus.SummaryOpts{
 var HotloadModtimeLatencyHistogramName = "hotload_modtime_latency_histogram"
 var HotloadModtimeLatencyHistogram = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 	Name: HotloadModtimeLatencyHistogramName,
-	Help: "Hotload modtime latency histogram (seconds)",
-}, []string{PathKey, StrategyKey})
+	Help: "Hotload modtime latency histogram (seconds) by strategy and path",
+}, []string{StrategyKey, PathKey})
 
 func ObserveHotloadModtimeLatencyHistogram(strategy, path string, val float64) {
 	HotloadModtimeLatencyHistogram.WithLabelValues(strategy, path).Observe(val)
+}
+
+// HotloadChangeCounter is count of changes detected by hotload
+var HotloadChangeCounterName = "hotload_change_counter"
+var HotloadChangeCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
+	Name: HotloadChangeCounterName,
+	Help: "Hotload change counter by url",
+}, []string{UrlKey})
+
+func IncHotloadChangeCounter(url string) {
+	HotloadChangeCounter.WithLabelValues(url).Inc()
 }
 
 func GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		SqlStmtsSummary,
 		HotloadModtimeLatencyHistogram,
+		HotloadChangeCounter,
 	}
 }
 
@@ -46,6 +59,7 @@ func GetCollectors() []prometheus.Collector {
 func ResetCollectors() {
 	SqlStmtsSummary.Reset()
 	HotloadModtimeLatencyHistogram.Reset()
+	HotloadChangeCounter.Reset()
 }
 
 func init() {

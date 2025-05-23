@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/infobloxopen/hotload/logger"
 	"github.com/teivah/onecontext"
@@ -26,8 +27,8 @@ type managedConn struct {
 	// callback function to be called after the connection is closed
 	afterClose func(*managedConn)
 
-	execStmtsCounter  int // count the number of exec calls in a transaction
-	queryStmtsCounter int // count the number of query calls in a transaction
+	execStmtsCounter  atomic.Int64 // count the number of exec calls in a transaction
+	queryStmtsCounter atomic.Int64 // count the number of query calls in a transaction
 }
 
 // BeginTx calls the underlying BeginTx method unless the supervising context
@@ -274,27 +275,19 @@ func (c *managedConn) GetKill() bool {
 }
 
 func (c *managedConn) incExecStmtsCounter() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.execStmtsCounter++
+	c.execStmtsCounter.Add(1)
 }
 
 func (c *managedConn) resetExecStmtsCounter() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.execStmtsCounter = 0
+	c.execStmtsCounter.Store(0)
 }
 
 func (c *managedConn) incQueryStmtsCounter() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.queryStmtsCounter++
+	c.queryStmtsCounter.Add(1)
 }
 
 func (c *managedConn) resetQueryStmtsCounter() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.queryStmtsCounter = 0
+	c.queryStmtsCounter.Store(0)
 }
 
 func (c *managedConn) logf(prefix, format string, args ...any) {
