@@ -8,10 +8,10 @@ type Logger func(...interface{})
 // DefaultLogger is a no-op logger function that does nothing
 var DefaultLogger Logger = func(args ...interface{}) {}
 
-// stdLogger is the standard global logger
+// stdLogger is the global standard logger
 var stdLogger Logger = DefaultLogger
 
-// WithLogger sets the standard logger
+// WithLogger sets the global standard logger
 func WithLogger(l Logger) {
 	stdLogger = l
 	if stdLogger == nil {
@@ -19,7 +19,7 @@ func WithLogger(l Logger) {
 	}
 }
 
-// GetLogger gets the standard logger
+// GetLogger gets the global standard logger
 func GetLogger() Logger {
 	if stdLogger == nil {
 		return DefaultLogger
@@ -27,6 +27,7 @@ func GetLogger() Logger {
 	return stdLogger
 }
 
+// Logf formats and prints to global standard logger
 func Logf(prefix, format string, args ...any) {
 	loggr := GetLogger()
 	logMsg := fmt.Sprintf(format, args...)
