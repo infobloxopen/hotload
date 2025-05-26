@@ -32,7 +32,7 @@ func (t *managedTx) Rollback() error {
 	return err
 }
 
-func observeSQLStmtsSummary(ctx context.Context, execStmtsCounter, queryStmtsCounter int) {
+func observeSQLStmtsSummary(ctx context.Context, execStmtsCounter, queryStmtsCounter int64) {
 	labels := GetExecLabelsFromContext(ctx)
 	service := labels[metrics.GRPCServiceKey]
 	method := labels[metrics.GRPCMethodKey]
@@ -42,7 +42,7 @@ func observeSQLStmtsSummary(ctx context.Context, execStmtsCounter, queryStmtsCou
 }
 
 func (t *managedTx) cleanup() {
-	observeSQLStmtsSummary(t.ctx, t.conn.execStmtsCounter, t.conn.queryStmtsCounter)
+	observeSQLStmtsSummary(t.ctx, t.conn.execStmtsCounter.Load(), t.conn.queryStmtsCounter.Load())
 	t.conn.resetExecStmtsCounter()
 	t.conn.resetQueryStmtsCounter()
 }

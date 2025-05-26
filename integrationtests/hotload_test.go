@@ -42,6 +42,14 @@ func init() {
 	hotload.RegisterSQLDriver("postgres", &pq.Driver{})
 }
 
+func formHotloadDsn(forceKill bool) string {
+	dsnUrl := "fsnotify://postgres" + configPath
+	if forceKill {
+		dsnUrl = dsnUrl + "?forceKill=true"
+	}
+	return dsnUrl
+}
+
 func setDSN(dsn string, path string) {
 	err := os.WriteFile(path, []byte(dsn), 0777)
 	if err != nil {
@@ -67,10 +75,7 @@ func openDbPostgres(dsn string) *sql.DB {
 
 // Open a db using hotload driver, or die
 func openDbHotload(forceKill bool) *sql.DB {
-	dsnUrl := "fsnotify://postgres" + configPath
-	if forceKill {
-		dsnUrl = dsnUrl + "?forceKill=true"
-	}
+	dsnUrl := formHotloadDsn(forceKill)
 
 	db, err := sql.Open("hotload", dsnUrl)
 	if err != nil {
