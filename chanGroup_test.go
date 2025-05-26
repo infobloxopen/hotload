@@ -112,10 +112,10 @@ var _ = DescribeTableSubtree("Driver", Serial, func(forceKill bool) {
 				}
 			}
 
-			// HotloadChangeCounter metric should be incremented
-			err := testutil.CollectAndCompare(metrics.HotloadChangeCounter,
-				strings.NewReader(expectHotloadChangeCounterHelp+
-					fmt.Sprintf(expectHotloadChangeCounterMetric, cg.name, 1)))
+			// HotloadChangeTotal metric should be incremented
+			err := testutil.CollectAndCompare(metrics.HotloadChangeTotal,
+				strings.NewReader(expectHotloadChangeTotalHelp+
+					fmt.Sprintf(expectHotloadChangeTotalMetric, cg.name, 1)))
 			Expect(err).ShouldNot(HaveOccurred())
 		}, NodeTimeout(5*time.Second))
 
@@ -143,8 +143,8 @@ var _ = DescribeTableSubtree("Driver", Serial, func(forceKill bool) {
 				Expect(mc.conn.(*testConn).closed).To(BeFalse())
 			}
 
-			// HotloadChangeCounter metric should NOT be incremented
-			err := testutil.CollectAndCompare(metrics.HotloadChangeCounter,
+			// HotloadChangeTotal metric should NOT be incremented
+			err := testutil.CollectAndCompare(metrics.HotloadChangeTotal,
 				strings.NewReader(""))
 			Expect(err).ShouldNot(HaveOccurred())
 		}, NodeTimeout(5*time.Second))
@@ -164,10 +164,10 @@ var _ = DescribeTableSubtree("Driver", Serial, func(forceKill bool) {
 				}
 			}
 
-			// HotloadChangeCounter metric should be incremented
-			err := testutil.CollectAndCompare(metrics.HotloadChangeCounter,
-				strings.NewReader(expectHotloadChangeCounterHelp+
-					fmt.Sprintf(expectHotloadChangeCounterMetric, cg.name, 1)))
+			// HotloadChangeTotal metric should be incremented
+			err := testutil.CollectAndCompare(metrics.HotloadChangeTotal,
+				strings.NewReader(expectHotloadChangeTotalHelp+
+					fmt.Sprintf(expectHotloadChangeTotalMetric, cg.name, 1)))
 			Expect(err).ShouldNot(HaveOccurred())
 		}, NodeTimeout(5*time.Second))
 	})
@@ -176,11 +176,11 @@ var _ = DescribeTableSubtree("Driver", Serial, func(forceKill bool) {
 	Entry("forceKill=true", true),
 )
 
-var expectHotloadChangeCounterHelp = `
-# HELP hotload_change_counter Hotload change counter by url
-# TYPE hotload_change_counter counter
+var expectHotloadChangeTotalHelp = `
+# HELP hotload_change_total Hotload change total by url
+# TYPE hotload_change_total counter
 `
 
-var expectHotloadChangeCounterMetric = `
-hotload_change_counter{url="%s"} %d
+var expectHotloadChangeTotalMetric = `
+hotload_change_total{url="%s"} %d
 `

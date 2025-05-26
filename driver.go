@@ -306,8 +306,8 @@ func (cg *chanGroup) processNewValue(newValue string) {
 
 	// Mutex MUST be unlocked at this point before continuing
 
-	// Update change counter metric
-	metrics.IncHotloadChangeCounter(cg.name)
+	// Increment change metric
+	metrics.IncHotloadChangeTotal(cg.name)
 
 	// Canceling previous ctx can potentially cause other threads
 	// to call managedConn.Close(), which calls managedConn.afterClose(),
