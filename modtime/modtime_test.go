@@ -324,17 +324,17 @@ func MustParseRFC3339(str string) time.Time {
 var expectMetricsRegexpInitial = `
 # HELP hotload_modtime_latency_histogram Hotload modtime latency histogram \(seconds\) by strategy and path
 # TYPE hotload_modtime_latency_histogram histogram
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.005"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.01"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.025"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.05"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.1"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.25"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.5"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="1"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="2.5"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="5"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="10"} 0
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="900"} 0
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="1800"} 0
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="2700"} 0
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="3600"} 0
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="4500"} 0
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="5400"} 0
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="7200"} 0
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="10800"} 0
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="14400"} 0
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="28800"} 0
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="86400"} 0
 hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="\+Inf"} 2
 hotload_modtime_latency_histogram_sum{path="/foo/bar",strategy="fsnotify"} 1.8446744\d*e\+10
 hotload_modtime_latency_histogram_count{path="/foo/bar",strategy="fsnotify"} 2
@@ -343,17 +343,17 @@ hotload_modtime_latency_histogram_count{path="/foo/bar",strategy="fsnotify"} 2
 var expectMetricsRegexpAfterModtimeUpdated = `
 # HELP hotload_modtime_latency_histogram Hotload modtime latency histogram \(seconds\) by strategy and path
 # TYPE hotload_modtime_latency_histogram histogram
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.005"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.01"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.025"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.05"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.1"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.25"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.5"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="1"} 1
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="2.5"} 1
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="5"} 1
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="10"} 1
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="900"} 1
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="1800"} 1
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="2700"} 1
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="3600"} 1
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="4500"} 1
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="5400"} 1
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="7200"} 1
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="10800"} 1
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="14400"} 1
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="28800"} 1
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="86400"} 1
 hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="\+Inf"} 3
 hotload_modtime_latency_histogram_sum{path="/foo/bar",strategy="fsnotify"} 1.8446744\d*e\+10
 hotload_modtime_latency_histogram_count{path="/foo/bar",strategy="fsnotify"} 3
@@ -362,17 +362,17 @@ hotload_modtime_latency_histogram_count{path="/foo/bar",strategy="fsnotify"} 3
 var expectMetricsRegexpAfterModtimeNotUpdated = `
 # HELP hotload_modtime_latency_histogram Hotload modtime latency histogram \(seconds\) by strategy and path
 # TYPE hotload_modtime_latency_histogram histogram
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.005"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.01"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.025"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.05"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.1"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.25"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="0.5"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="1"} 1
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="2.5"} 2
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="5"} 2
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="10"} 2
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="900"} 2
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="1800"} 2
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="2700"} 2
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="3600"} 2
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="4500"} 2
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="5400"} 2
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="7200"} 2
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="10800"} 2
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="14400"} 2
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="28800"} 2
+hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="86400"} 2
 hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="\+Inf"} 4
 hotload_modtime_latency_histogram_sum{path="/foo/bar",strategy="fsnotify"} 1.8446744\d*e\+10
 hotload_modtime_latency_histogram_count{path="/foo/bar",strategy="fsnotify"} 4
