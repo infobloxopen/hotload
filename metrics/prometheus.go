@@ -27,9 +27,12 @@ var SqlStmtsSummary = prometheus.NewSummaryVec(prometheus.SummaryOpts{
 // HotloadModtimeLatencyHistogram is modtime latency histogram (in seconds)
 // ie: each sample datapoint is time.Now().Sub(Modtime)
 var HotloadModtimeLatencyHistogramName = "hotload_modtime_latency_histogram"
+var HotloadModtimeLatencyHistogramHelp = "Hotload modtime latency histogram (seconds) by strategy and path"
+var HotloadModtimeLatencyHistogramDefBuckets = []float64{900, 1800, 2700, 3600, 4500, 5400, 7200, 10800, 14400, 28800, 86400}
 var HotloadModtimeLatencyHistogram = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-	Name: HotloadModtimeLatencyHistogramName,
-	Help: "Hotload modtime latency histogram (seconds) by strategy and path",
+	Name:    HotloadModtimeLatencyHistogramName,
+	Help:    HotloadModtimeLatencyHistogramHelp,
+	Buckets: HotloadModtimeLatencyHistogramDefBuckets,
 }, []string{StrategyKey, PathKey})
 
 func ObserveHotloadModtimeLatencyHistogram(strategy, path string, val float64) {
