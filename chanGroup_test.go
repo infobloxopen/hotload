@@ -13,6 +13,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/infobloxopen/hotload/internal"
 	"github.com/infobloxopen/hotload/metrics"
 )
 
@@ -169,6 +170,11 @@ var _ = DescribeTableSubtree("Driver", Serial, func(forceKill bool) {
 				strings.NewReader(expectHotloadChangeTotalHelp+
 					fmt.Sprintf(expectHotloadChangeTotalMetric, cg.name, 1)))
 			Expect(err).ShouldNot(HaveOccurred())
+
+			err = internal.CollectAndRegexpCompare(metrics.HotloadLastChangedTimestampSeconds,
+				strings.NewReader(expectHotloadLastChangedTimestampSecondsMetricRegexp),
+				metrics.HotloadLastChangedTimestampSecondsName)
+			Expect(err).ShouldNot(HaveOccurred())
 		}, NodeTimeout(5*time.Second))
 	})
 },
@@ -183,4 +189,10 @@ var expectHotloadChangeTotalHelp = `
 
 var expectHotloadChangeTotalMetric = `
 hotload_change_total{url="%s"} %d
+`
+
+var expectHotloadLastChangedTimestampSecondsMetricRegexp = `
+# HELP hotload_last_changed_timestamp_seconds Hotload last changed \(unix timestamp\), by url
+# TYPE hotload_last_changed_timestamp_seconds gauge
+hotload_last_changed_timestamp_seconds{url="fsnotify://postgres/tmp/mydsn.txt"} \d\.\d+e\+\d+
 `
