@@ -41,13 +41,26 @@ func ObserveHotloadModtimeLatencyHistogram(strategy, path string, val float64) {
 
 // HotloadChangeTotal is count of changes detected by hotload
 var HotloadChangeTotalName = "hotload_change_total"
+var HotloadChangeTotalHelp = "Hotload change total by url"
 var HotloadChangeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 	Name: HotloadChangeTotalName,
-	Help: "Hotload change total by url",
+	Help: HotloadChangeTotalHelp,
 }, []string{UrlKey})
 
 func IncHotloadChangeTotal(url string) {
 	HotloadChangeTotal.WithLabelValues(url).Inc()
+}
+
+// HotloadLastChangedTimestampSeconds is timestamp when hotload last detected change (unix timestamp)
+var HotloadLastChangedTimestampSecondsName = "hotload_last_changed_timestamp_seconds"
+var HotloadLastChangedTimestampSecondsHelp = "Hotload last changed (unix timestamp), by url"
+var HotloadLastChangedTimestampSeconds = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	Name: HotloadLastChangedTimestampSecondsName,
+	Help: HotloadLastChangedTimestampSecondsHelp,
+}, []string{UrlKey})
+
+func SetHotloadLastChangedTimestampSeconds(url string, val float64) {
+	HotloadLastChangedTimestampSeconds.WithLabelValues(url).Set(val)
 }
 
 func GetCollectors() []prometheus.Collector {
@@ -55,6 +68,7 @@ func GetCollectors() []prometheus.Collector {
 		SqlStmtsSummary,
 		HotloadModtimeLatencyHistogram,
 		HotloadChangeTotal,
+		HotloadLastChangedTimestampSeconds,
 	}
 }
 
@@ -63,6 +77,7 @@ func ResetCollectors() {
 	SqlStmtsSummary.Reset()
 	HotloadModtimeLatencyHistogram.Reset()
 	HotloadChangeTotal.Reset()
+	HotloadLastChangedTimestampSeconds.Reset()
 }
 
 func init() {
