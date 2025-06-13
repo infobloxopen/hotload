@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/infobloxopen/hotload"
 	"github.com/infobloxopen/hotload/internal"
 	"github.com/infobloxopen/hotload/logger"
 
@@ -54,6 +55,8 @@ func TestIntegrationtests(t *testing.T) {
 
 	nrr := internal.NewNonRandomReader(1)
 	uuid.SetRand(nrr)
+
+	os.Setenv(hotload.CheckIntervalEnvVar, "1s")
 
 	pgHost, ok := os.LookupEnv("HOTLOAD_INTEGRATION_TEST_POSTGRES_HOST")
 	pgHost = strings.TrimSpace(pgHost)

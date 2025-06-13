@@ -63,12 +63,38 @@ func SetHotloadLastChangedTimestampSeconds(url string, val float64) {
 	HotloadLastChangedTimestampSeconds.WithLabelValues(url).Set(val)
 }
 
+// HotloadPathChksumChangeTotal is count of path checksum changes polled by hotload
+var HotloadPathChksumChangeTotalName = "hotload_path_chksum_change_total"
+var HotloadPathChksumChangeTotalHelp = "Hotload path checksum change total by path"
+var HotloadPathChksumChangeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+	Name: HotloadPathChksumChangeTotalName,
+	Help: HotloadPathChksumChangeTotalHelp,
+}, []string{PathKey})
+
+func IncHotloadPathChksumChangeTotal(path string) {
+	HotloadPathChksumChangeTotal.WithLabelValues(path).Inc()
+}
+
+// HotloadPathChksumTimestampSeconds is timestamp when hotload path checksum changed (unix timestamp)
+var HotloadPathChksumTimestampSecondsName = "hotload_path_chksum_timestamp_seconds"
+var HotloadPathChksumTimestampSecondsHelp = "Hotload path checksum last changed (unix timestamp), by path"
+var HotloadPathChksumTimestampSeconds = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	Name: HotloadPathChksumTimestampSecondsName,
+	Help: HotloadPathChksumTimestampSecondsHelp,
+}, []string{PathKey})
+
+func SetHotloadPathChksumTimestampSeconds(path string, val float64) {
+	HotloadPathChksumTimestampSeconds.WithLabelValues(path).Set(val)
+}
+
 func GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		SqlStmtsSummary,
 		HotloadModtimeLatencyHistogram,
 		HotloadChangeTotal,
 		HotloadLastChangedTimestampSeconds,
+		HotloadPathChksumChangeTotal,
+		HotloadPathChksumTimestampSeconds,
 	}
 }
 
@@ -78,6 +104,8 @@ func ResetCollectors() {
 	HotloadModtimeLatencyHistogram.Reset()
 	HotloadChangeTotal.Reset()
 	HotloadLastChangedTimestampSeconds.Reset()
+	HotloadPathChksumChangeTotal.Reset()
+	HotloadPathChksumTimestampSeconds.Reset()
 }
 
 func init() {
