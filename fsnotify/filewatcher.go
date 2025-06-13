@@ -36,6 +36,7 @@ type Strategy struct {
 	mu      sync.RWMutex
 	paths   map[string]*pathWatch
 	watcher watcher
+	pathMon *hotload.PathMonitor
 }
 
 type pendingOperation struct {
@@ -166,6 +167,9 @@ func (s *Strategy) Watch(ctx context.Context, pth string, pathQry string) (value
 		s.watcher = watcher
 		go s.runLoop()
 	}
+	if s.pathMon == nil {
+		s.pathMon = hotload.NewPathMonitor(ctx)
+	}
 	pathW, found := s.paths[pth]
 	if found {
 		pathW.logf("fsnotify.Watch", "path already being watched")
@@ -173,6 +177,12 @@ func (s *Strategy) Watch(ctx context.Context, pth string, pathQry string) (value
 		s.logf("fsnotify.Watch", "new path to be watched: '%s'", pth)
 		if err := s.watcher.Add(pth); err != nil {
 			return "", nil, err
+		}
+		if err := s.pathMon.AddMonitoredPath(pth); err != nil {
+			if err != hotload.ErrDuplicatePath {
+				s.errlogf("fsnotify.Watch", "pathMon.AddMonitoredPath(%s) failed, err=%v", pth, err)
+				return "", nil, err
+			}
 		}
 		bs, err := s.readConfigFile(pth)
 		if err != nil {

@@ -192,7 +192,11 @@ func Strategies() []string {
 }
 
 func init() {
-	sql.Register("hotload", &hdriver{ctx: context.Background(), cgroup: make(map[string]*chanGroup)})
+	ctx := context.Background()
+	sql.Register("hotload", &hdriver{
+		ctx:    ctx,
+		cgroup: make(map[string]*chanGroup),
+	})
 }
 
 // hdriver is the hotload driver.

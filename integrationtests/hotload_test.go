@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/infobloxopen/hotload"
 	_ "github.com/infobloxopen/hotload/fsnotify"
+	"github.com/infobloxopen/hotload/internal"
+	"github.com/infobloxopen/hotload/metrics"
 	"github.com/infobloxopen/hotload/modtime"
 	"github.com/lib/pq"
 	_ "github.com/lib/pq"
@@ -238,6 +241,19 @@ var _ = AfterSuite(func(ctx context.Context) {
 	}
 
 	//expectConnCountInDb(hlt, 3)
+
+	// HotloadPathChksumChangeTotal metric should be incremented
+	err = internal.CollectAndRegexpCompare(metrics.HotloadPathChksumChangeTotal,
+		strings.NewReader(fmt.Sprintf(expectHotloadPathChksumChangeTotalMetricRegexp,
+			"/tmp/hotload_integration_test_dsn_config.txt")),
+		metrics.HotloadPathChksumChangeTotalName)
+	Expect(err).ShouldNot(HaveOccurred())
+
+	err = internal.CollectAndRegexpCompare(metrics.HotloadPathChksumTimestampSeconds,
+		strings.NewReader(fmt.Sprintf(expectHotloadPathChksumTimestampSecondsMetricRegexp,
+			"/tmp/hotload_integration_test_dsn_config.txt")),
+		metrics.HotloadPathChksumTimestampSecondsName)
+	Expect(err).ShouldNot(HaveOccurred())
 }, NodeTimeout(240*time.Second))
 
 var _ = Describe("hotload integration tests - sanity", Serial, func() {
@@ -302,3 +318,15 @@ var _ = Describe("hotload integration tests - sanity", Serial, func() {
 		expectValueInDb(hlt1Db, "sanity", false, 1, 1)
 	})
 })
+
+var expectHotloadPathChksumChangeTotalMetricRegexp = `
+# HELP hotload_path_chksum_change_total Hotload path checksum change total by path
+# TYPE hotload_path_chksum_change_total counter
+hotload_path_chksum_change_total{path="%s"} 4\d
+`
+
+var expectHotloadPathChksumTimestampSecondsMetricRegexp = `
+# HELP hotload_path_chksum_timestamp_seconds Hotload path checksum last changed \(unix timestamp\), by path
+# TYPE hotload_path_chksum_timestamp_seconds gauge
+hotload_path_chksum_timestamp_seconds{path="%s"} \d\.\d+e\+\d+
+`
