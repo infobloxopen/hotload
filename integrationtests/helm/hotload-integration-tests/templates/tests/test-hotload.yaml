@@ -15,4 +15,6 @@ spec:
       env:
         - name: HOTLOAD_INTEGRATION_TEST_POSTGRES_HOST
           value: hotload-integration-tests-postgresql.default.svc.cluster.local
+        - name: HOTLOAD_PATH_CHKSUM_METRICS_ENABLE
+          value: "true"
   restartPolicy: Never
