@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/infobloxopen/hotload"
 	_ "github.com/infobloxopen/hotload/fsnotify"
+	"github.com/infobloxopen/hotload/internal"
+	"github.com/infobloxopen/hotload/metrics"
 	"github.com/infobloxopen/hotload/modtime"
 	"github.com/lib/pq"
 	_ "github.com/lib/pq"
@@ -238,6 +241,13 @@ var _ = AfterSuite(func(ctx context.Context) {
 	}
 
 	//expectConnCountInDb(hlt, 3)
+
+	err = internal.CollectAndRegexpCompare(metrics.HotloadPathChksumTimestampSecondsGaugeFuncVec,
+		strings.NewReader(metrics.ExpectHotloadPathChksumTimestampSecondsPreamble+
+			fmt.Sprintf(metrics.ExpectHotloadPathChksumTimestampSecondsRegexp,
+				"/tmp/hotload_integration_test_dsn_config.txt")),
+		metrics.HotloadPathChksumTimestampSecondsName)
+	Expect(err).ShouldNot(HaveOccurred())
 }, NodeTimeout(240*time.Second))
 
 var _ = Describe("hotload integration tests - sanity", Serial, func() {
