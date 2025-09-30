@@ -121,8 +121,7 @@ func (c *managedConn) ExecContext(ctx context.Context, query string, args []driv
 	}
 	c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
 	c.logf("managedConn.ExecContext", "calling underlying conn.ExecContext()")
-	mergedCtx, cancel := onecontext.Merge(c.ctx, ctx)
-	defer cancel()
+	mergedCtx, _ := onecontext.Merge(c.ctx, ctx)
 	return conn.ExecContext(mergedCtx, query, args)
 }
 
@@ -174,8 +173,7 @@ func (c *managedConn) QueryContext(ctx context.Context, query string, args []dri
 	}
 	c.incQueryStmtsCounter() //increment the query counter to keep track of the number of query calls
 	c.logf("managedConn.QueryContext", "calling underlying conn.QueryContext()")
-	mergedCtx, cancel := onecontext.Merge(c.ctx, ctx)
-	defer cancel()
+	mergedCtx, _ := onecontext.Merge(c.ctx, ctx)
 	return conn.QueryContext(mergedCtx, query, args)
 }
 
