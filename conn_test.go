@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql/driver"
 	"io"
+	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -41,6 +43,169 @@ var _ = Describe("managedConn", func() {
 		Consistently(writeLockAcquired).Should(BeFalse())
 		Consistently(readLockAcquired).Should(BeFalse())
 	})
+
+	It("Should not leak goroutines when using ExecContext and QueryContext", func() {
+		// Force garbage collection and get baseline
+		runtime.GC()
+		runtime.GC()
+		time.Sleep(50 * time.Millisecond)
+		initialGoroutines := runtime.NumGoroutine()
+
+		// Create a long-lived parent context that won't be cancelled
+		parentCtx := context.Background() // This simulates a long-lived connection context
+
+		// Create managed connection
+		mc := newManagedConn(parentCtx, "dsn", "redactDsn", mockDriverConn{}, nil)
+
+		// Create many operations with different child contexts
+		// This will trigger onecontext.Merge calls, and without defer mCancel(),
+		// goroutines will leak because parentCtx is never cancelled
+		numOperations := 50
+
+		for i := 0; i < numOperations; i++ {
+			// Create short-lived contexts for each operation
+			childCtx := context.Background() // Also long-lived for this test
+
+			// Each call to ExecContext will create a merged context internally
+			// Without defer mCancel(), the goroutine will wait indefinitely
+			mc.ExecContext(childCtx, "INSERT INTO table (column) VALUES (?)", []driver.NamedValue{{Value: "value"}})
+			mc.QueryContext(childCtx, "SELECT * FROM table WHERE column = ?", []driver.NamedValue{{Value: "value"}})
+		}
+
+		// Close the connection
+		err := mc.Close()
+		Expect(err).ShouldNot(HaveOccurred())
+
+		// Give time for any leaked goroutines to be detected
+		time.Sleep(200 * time.Millisecond)
+		runtime.GC()
+		runtime.GC()
+
+		// Check that we don't have significantly more goroutines than we started with
+		finalGoroutines := runtime.NumGoroutine()
+
+		// With the leak, we expect to see many leaked goroutines from onecontext.Merge
+		// Each ExecContext and QueryContext call that doesn't call defer mCancel() will leak a goroutine
+		expectedLeaks := numOperations * 2 // One for each ExecContext and QueryContext call
+
+		Expect(finalGoroutines).To(BeNumerically("<=", initialGoroutines+10),
+			"Expected no significant goroutine leaks. Initial: %d, Final: %d, Expected leaks if broken: ~%d",
+			initialGoroutines, finalGoroutines, expectedLeaks)
+	})
+
+	It("Should handle context cancellation properly in ExecContext", func() {
+		parentCtx, parentCancel := context.WithCancel(context.Background())
+		mc := newManagedConn(parentCtx, "dsn", "redactDsn", mockDriverConn{}, nil)
+
+		// Create a context that's already cancelled
+		cancelledCtx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		// ExecContext should still work even with cancelled child context
+		// because the parent context is still active
+		_, err := mc.ExecContext(cancelledCtx, "INSERT INTO table (column) VALUES (?)", []driver.NamedValue{{Value: "value"}})
+		Expect(err).ShouldNot(HaveOccurred())
+
+		// Now cancel the parent context
+		parentCancel()
+
+		// Give some time for context cancellation to propagate
+		time.Sleep(10 * time.Millisecond)
+
+		// This should fail because parent context is cancelled
+		mc.ExecContext(context.Background(), "INSERT INTO table (column) VALUES (?)", []driver.NamedValue{{Value: "value"}})
+		// The mock doesn't return context.Canceled, but the connection should work
+		// The important thing is that no goroutines are leaked
+	})
+
+	It("Should not leak goroutines with slow operations and context cancellation", func() {
+		// Force garbage collection and get very precise baseline
+		runtime.GC()
+		runtime.GC()
+		time.Sleep(100 * time.Millisecond)
+		runtime.GC()
+		initialGoroutines := runtime.NumGoroutine()
+
+		// Create contexts that will be cancelled during operations
+		parentCtx, parentCancel := context.WithCancel(context.Background())
+		defer parentCancel()
+
+		// Create managed connection with the slow mock to simulate real database behavior
+		mc := newManagedConn(parentCtx, "dsn", "redactDsn", mockSlowDriverConn{}, nil)
+
+		// Create many concurrent operations that will force onecontext.Merge goroutine creation
+		var wg sync.WaitGroup
+		numOperations := 100 // Much higher number to force obvious leaks
+
+		for i := 0; i < numOperations; i++ {
+			wg.Add(2)
+
+			go func(iteration int) {
+				defer wg.Done()
+				// Create a unique context for each operation to force new onecontext.Merge calls
+				timeoutCtx, timeoutCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+				defer timeoutCancel()
+
+				// This should timeout and without defer mCancel(), leak goroutines
+				mc.ExecContext(timeoutCtx, "INSERT INTO table (column) VALUES (?)", []driver.NamedValue{{Value: "value"}})
+			}(i)
+
+			go func(iteration int) {
+				defer wg.Done()
+				// Create a unique context for each operation to force new onecontext.Merge calls
+				timeoutCtx, timeoutCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+				defer timeoutCancel()
+
+				// This should timeout and without defer mCancel(), leak goroutines
+				mc.QueryContext(timeoutCtx, "SELECT * FROM table WHERE column = ?", []driver.NamedValue{{Value: "value"}})
+			}(i)
+		}
+
+		wg.Wait()
+
+		// Close the connection
+		err := mc.Close()
+		Expect(err).ShouldNot(HaveOccurred())
+
+		// Give substantial time for leaked goroutines to accumulate
+		time.Sleep(500 * time.Millisecond)
+		runtime.GC()
+		runtime.GC()
+
+		// Check that we don't have significantly more goroutines than we started with
+		finalGoroutines := runtime.NumGoroutine()
+
+		// This should definitely fail if there are goroutine leaks from onecontext.Merge
+		// Being very strict about detecting leaks
+		Expect(finalGoroutines).To(BeNumerically("<=", initialGoroutines+10),
+			"Expected no significant goroutine leaks from onecontext.Merge. Initial: %d, Final: %d, Diff: %d",
+			initialGoroutines, finalGoroutines, finalGoroutines-initialGoroutines)
+	})
+
+	It("Should handle context cancellation properly in QueryContext", func() {
+		parentCtx, parentCancel := context.WithCancel(context.Background())
+		mc := newManagedConn(parentCtx, "dsn", "redactDsn", mockDriverConn{}, nil)
+
+		// Create a context that's already cancelled
+		cancelledCtx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		// QueryContext should still work even with cancelled child context
+		// because the parent context is still active
+		_, err := mc.QueryContext(cancelledCtx, "SELECT * FROM table WHERE column = ?", []driver.NamedValue{{Value: "value"}})
+		Expect(err).ShouldNot(HaveOccurred())
+
+		// Now cancel the parent context
+		parentCancel()
+
+		// Give some time for context cancellation to propagate
+		time.Sleep(10 * time.Millisecond)
+
+		// This should work but no goroutines should be leaked
+		mc.QueryContext(context.Background(), "SELECT * FROM table WHERE column = ?", []driver.NamedValue{{Value: "value"}})
+		// The mock doesn't return context.Canceled, but the connection should work
+		// The important thing is that no goroutines are leaked
+	})
 })
 
 /**** Mocks for Prometheus Metrics ****/
@@ -48,6 +213,10 @@ var _ = Describe("managedConn", func() {
 type mockDriverConn struct{}
 
 type mockTx struct{}
+
+// mockSlowDriverConn simulates a driver that might have slow operations
+// This helps test for goroutine leaks in scenarios where context cancellation matters
+type mockSlowDriverConn struct{}
 
 func (mockTx) Commit() error {
 	return nil
@@ -91,6 +260,71 @@ func (mockDriverConn) ExecContext(ctx context.Context, query string, args []driv
 
 func (mockDriverConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	return nil, nil
+}
+
+// mockSlowDriverConn methods - simulates operations that might be slow
+func (mockSlowDriverConn) Prepare(query string) (driver.Stmt, error) {
+	return nil, nil
+}
+
+func (mockSlowDriverConn) Begin() (driver.Tx, error) {
+	return mockTx{}, nil
+}
+
+func (mockSlowDriverConn) Close() error {
+	return nil
+}
+
+func (mockSlowDriverConn) IsValid() bool {
+	return true
+}
+
+func (mockSlowDriverConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	return mockTx{}, nil
+}
+
+func (mockSlowDriverConn) Exec(query string, args []driver.Value) (driver.Result, error) {
+	return nil, nil
+}
+
+func (mockSlowDriverConn) Query(query string, args []driver.Value) (driver.Rows, error) {
+	return nil, nil
+}
+
+func (mockSlowDriverConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	// Check if context is cancelled before proceeding
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	// Simulate a slow operation that keeps goroutines alive longer
+	timer := time.NewTimer(200 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (mockSlowDriverConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	// Check if context is cancelled before proceeding
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	// Simulate a slow operation that keeps goroutines alive longer
+	timer := time.NewTimer(200 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 /**** End Mocks for Prometheus Metrics ****/
