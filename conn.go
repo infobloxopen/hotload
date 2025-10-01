@@ -121,7 +121,8 @@ func (c *managedConn) ExecContext(ctx context.Context, query string, args []driv
 	}
 	c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
 	c.logf("managedConn.ExecContext", "calling underlying conn.ExecContext()")
-	mergedCtx, _ := onecontext.Merge(c.ctx, ctx)
+	mergedCtx, cancel := onecontext.Merge(c.ctx, ctx)
+	defer cancel() // FIX: Clean up the goroutine spawned by Merge
 	return conn.ExecContext(mergedCtx, query, args)
 }
 
@@ -173,7 +174,8 @@ func (c *managedConn) QueryContext(ctx context.Context, query string, args []dri
 	}
 	c.incQueryStmtsCounter() //increment the query counter to keep track of the number of query calls
 	c.logf("managedConn.QueryContext", "calling underlying conn.QueryContext()")
-	mergedCtx, _ := onecontext.Merge(c.ctx, ctx)
+	mergedCtx, cancel := onecontext.Merge(c.ctx, ctx)
+	defer cancel() // FIX: Clean up the goroutine spawned by Merge
 	return conn.QueryContext(mergedCtx, query, args)
 }
 
