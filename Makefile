@@ -73,4 +73,4 @@ postgres-docker-compose-down:
 
 # Requires postgres db, see target postgres-docker-compose-up
 local-integration-tests:
-	HOTLOAD_PATH_CHKSUM_METRICS_ENABLE=true go test -v -race -timeout=3m github.com/infobloxopen/hotload/integrationtests
+	HOTLOAD_PATH_CHKSUM_METRICS_ENABLE=true go test -v -race -timeout=3m -count=1 github.com/infobloxopen/hotload/integrationtests
