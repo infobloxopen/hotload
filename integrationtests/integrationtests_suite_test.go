@@ -25,8 +25,8 @@ var (
 	hldatabaseSuperDsn string
 	hldatabaseAdminDsn string
 
-	superUser  = "postgres"
-	superPass  = "postgres"
+	superUser  = "admin"
+	superPass  = "test"
 	adminUser  = "admin"
 	adminPass  = "test"
 	testDbUser = "uuser"

@@ -121,7 +121,8 @@ func (c *managedConn) ExecContext(ctx context.Context, query string, args []driv
 	}
 	c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
 	c.logf("managedConn.ExecContext", "calling underlying conn.ExecContext()")
-	mergedCtx, _ := onecontext.Merge(c.ctx, ctx)
+	mergedCtx, cancel := onecontext.Merge(c.ctx, ctx)
+	defer cancel()
 	return conn.ExecContext(mergedCtx, query, args)
 }
 
@@ -173,8 +174,17 @@ func (c *managedConn) QueryContext(ctx context.Context, query string, args []dri
 	}
 	c.incQueryStmtsCounter() //increment the query counter to keep track of the number of query calls
 	c.logf("managedConn.QueryContext", "calling underlying conn.QueryContext()")
-	mergedCtx, _ := onecontext.Merge(c.ctx, ctx)
-	return conn.QueryContext(mergedCtx, query, args)
+
+	// TODO
+	// We would like to merge the hotload-context with the query-context here,
+	// and then cancel the merged-context to prevent goroutine-leaks
+	// (similar to ExecContext() above).
+	// However the Rows object returned seems to contain the merged-context.
+	// Canceling the merged-context here invalidates the returned Rows object,
+	// and causes any cursor iteration of the returned Rows objects to fail
+	// with context-canceled error.
+
+	return conn.QueryContext(ctx, query, args)
 }
 
 func (c *managedConn) Prepare(query string) (driver.Stmt, error) {
