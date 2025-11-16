@@ -1,0 +1,82 @@
+package prometheusmetrics
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"regexp"
+	"strings"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/prometheus/common/expfmt"
+)
+
+// CollectAndRegexpCompare is similar to testutil.CollectAndCompare()
+// but the expected lines are regexp patterns.
+// Note that unlike testutil.CollectAndCompare(),
+// the metricName MUST be specified to get any collected result.
+func CollectAndRegexpCompare(collector prometheus.Collector, expectRdr io.Reader, metricNames ...string) error {
+	expectBytes, err := io.ReadAll(expectRdr)
+	if err != nil {
+		return err
+	}
+
+	collectBytes, err := testutil.CollectAndFormat(collector, expfmt.TypeTextPlain, metricNames...)
+	if err != nil {
+		return err
+	}
+
+	expectStr := strings.TrimSpace(string(expectBytes))
+	collectStr := strings.TrimSpace(string(collectBytes))
+
+	expectSplit := strings.Split(expectStr, "\n")
+	collectSplit := strings.Split(collectStr, "\n")
+
+	diffStr := strings.TrimSpace(simpleRegexpLineDiff(expectSplit, collectSplit))
+	if len(diffStr) > 0 {
+		return errors.New(diffStr)
+	}
+	return nil
+}
+
+// simpleRegexpLineDiff performs a simple/dumb line-by-line diff
+// between two arrays of lines.  The expected array of lines are regexp patterns.
+// Returns line(s) which diff.  Empty string is returned if there are no diffs.
+func simpleRegexpLineDiff(regexpLines []string, gotLines []string) string {
+	maxLen := len(regexpLines)
+	if maxLen < len(gotLines) {
+		maxLen = len(gotLines)
+	}
+
+	if len(regexpLines) < maxLen {
+		for k := len(regexpLines); k < maxLen; k++ {
+			regexpLines = append(regexpLines, "")
+		}
+	}
+
+	if len(gotLines) < maxLen {
+		for k := len(gotLines); k < maxLen; k++ {
+			gotLines = append(gotLines, "")
+		}
+	}
+
+	var diffBuf strings.Builder
+	for k := 0; k < maxLen; k++ {
+		expStr := strings.TrimSpace(regexpLines[k])
+		gotStr := strings.TrimSpace(gotLines[k])
+		expPat := `^` + expStr + `$`
+
+		matched, err := regexp.MatchString(expPat, gotStr)
+		if err != nil {
+			return err.Error()
+		}
+
+		if !matched {
+			fmt.Fprintf(&diffBuf, "-%s\n", expStr)
+			fmt.Fprintf(&diffBuf, "+%s\n", gotStr)
+		}
+	}
+
+	return diffBuf.String()
+}

@@ -5,13 +5,11 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
 
 	internal "github.com/infobloxopen/hotload/internal"
-	"github.com/infobloxopen/hotload/metrics"
 )
 
 var fsnotifyStrategy = "fsnotify"
@@ -22,8 +20,6 @@ func TestAgainstUnixFS(t *testing.T) {
 	var zeroTime time.Time
 	ctx, cancelCtxFn := context.WithCancel(context.Background())
 	defer cancelCtxFn()
-
-	metrics.ResetCollectors()
 
 	logfn := func(args ...any) {
 		log.Println(args...)
@@ -71,8 +67,6 @@ func TestAgainstMapFS(t *testing.T) {
 	ctx, cancelCtxFn := context.WithCancel(context.Background())
 	defer cancelCtxFn()
 
-	metrics.ResetCollectors()
-
 	// Create MapFS mock FS
 	pth := "/foo/bar"
 	mfs := internal.NewSafeMapFS()
@@ -107,12 +101,6 @@ func TestAgainstMapFS(t *testing.T) {
 		}
 		prevTime = sts.ModTime
 	}
-	err = internal.CollectAndRegexpCompare(metrics.HotloadModtimeLatencyHistogram,
-		strings.NewReader(expectMetricsRegexpInitial),
-		metrics.HotloadModtimeLatencyHistogramName)
-	if err != nil {
-		t.Errorf("CollectAndRegexpCompare(): unexpected err=\n%s", err)
-	}
 
 	// Update mock path mod-time
 	mapf, err := mfs.GetMapFile(pth)
@@ -137,12 +125,6 @@ func TestAgainstMapFS(t *testing.T) {
 		}
 		prevTime = sts.ModTime
 	}
-	err = internal.CollectAndRegexpCompare(metrics.HotloadModtimeLatencyHistogram,
-		strings.NewReader(expectMetricsRegexpAfterModtimeUpdated),
-		metrics.HotloadModtimeLatencyHistogramName)
-	if err != nil {
-		t.Errorf("CollectAndRegexpCompare(): unexpected err=\n%s", err)
-	}
 
 	// Give time for ModTimeMonitor background thread to check mod-times.
 	// Wait 1 cycle of checks.
@@ -159,12 +141,6 @@ func TestAgainstMapFS(t *testing.T) {
 		}
 		prevTime = sts.ModTime
 	}
-	err = internal.CollectAndRegexpCompare(metrics.HotloadModtimeLatencyHistogram,
-		strings.NewReader(expectMetricsRegexpAfterModtimeNotUpdated),
-		metrics.HotloadModtimeLatencyHistogramName)
-	if err != nil {
-		t.Errorf("CollectAndRegexpCompare(): unexpected err=\n%s", err)
-	}
 
 	// Cancel ctx and give time for background threads to terminate
 	cancelCtxFn()
@@ -178,8 +154,6 @@ func TestConcurrency(t *testing.T) {
 	var zeroTime time.Time
 	ctx, cancelCtxFn := context.WithCancel(context.Background())
 	defer cancelCtxFn()
-
-	metrics.ResetCollectors()
 
 	commonIntv := time.Millisecond * 100
 
@@ -320,60 +294,3 @@ func MustParseRFC3339(str string) time.Time {
 	}
 	return t
 }
-
-var expectMetricsRegexpInitial = `
-# HELP hotload_modtime_latency_histogram Hotload modtime latency histogram \(seconds\) by strategy and path
-# TYPE hotload_modtime_latency_histogram histogram
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="900"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="1800"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="2700"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="3600"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="4500"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="5400"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="7200"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="10800"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="14400"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="28800"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="86400"} 0
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="\+Inf"} 2
-hotload_modtime_latency_histogram_sum{path="/foo/bar",strategy="fsnotify"} 1.8446744\d*e\+10
-hotload_modtime_latency_histogram_count{path="/foo/bar",strategy="fsnotify"} 2
-`
-
-var expectMetricsRegexpAfterModtimeUpdated = `
-# HELP hotload_modtime_latency_histogram Hotload modtime latency histogram \(seconds\) by strategy and path
-# TYPE hotload_modtime_latency_histogram histogram
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="900"} 1
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="1800"} 1
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="2700"} 1
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="3600"} 1
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="4500"} 1
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="5400"} 1
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="7200"} 1
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="10800"} 1
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="14400"} 1
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="28800"} 1
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="86400"} 1
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="\+Inf"} 3
-hotload_modtime_latency_histogram_sum{path="/foo/bar",strategy="fsnotify"} 1.8446744\d*e\+10
-hotload_modtime_latency_histogram_count{path="/foo/bar",strategy="fsnotify"} 3
-`
-
-var expectMetricsRegexpAfterModtimeNotUpdated = `
-# HELP hotload_modtime_latency_histogram Hotload modtime latency histogram \(seconds\) by strategy and path
-# TYPE hotload_modtime_latency_histogram histogram
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="900"} 2
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="1800"} 2
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="2700"} 2
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="3600"} 2
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="4500"} 2
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="5400"} 2
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="7200"} 2
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="10800"} 2
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="14400"} 2
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="28800"} 2
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="86400"} 2
-hotload_modtime_latency_histogram_bucket{path="/foo/bar",strategy="fsnotify",le="\+Inf"} 4
-hotload_modtime_latency_histogram_sum{path="/foo/bar",strategy="fsnotify"} 1.8446744\d*e\+10
-hotload_modtime_latency_histogram_count{path="/foo/bar",strategy="fsnotify"} 4
-`

@@ -2,6 +2,7 @@ package fsnotify
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -14,7 +15,6 @@ import (
 	"github.com/infobloxopen/hotload/internal"
 	"github.com/infobloxopen/hotload/logger"
 	"github.com/infobloxopen/hotload/metrics"
-	"github.com/pkg/errors"
 )
 
 func init() {
@@ -64,7 +64,7 @@ type pathWatch struct {
 func (s *Strategy) readConfigFile(path string) (v []byte, err error) {
 	v, err = os.ReadFile(path)
 	if err != nil {
-		return nil, errors.Wrapf(err, "could not read %v", path)
+		return nil, fmt.Errorf("could not read %v: %w", path, err)
 	}
 	v = []byte(strings.TrimSpace(string(v)))
 	return

@@ -1,4 +1,4 @@
-package metrics
+package prometheusmetrics
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/infobloxopen/hotload/internal"
+	"github.com/infobloxopen/hotload/metrics"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 

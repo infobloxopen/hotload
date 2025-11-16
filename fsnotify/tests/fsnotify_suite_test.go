@@ -1,4 +1,4 @@
-package fsnotify
+package fsnotify_test
 
 import (
 	"log"

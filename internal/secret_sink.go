@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/infobloxopen/hotload/internal/randstring"
 )
 
 const (
@@ -69,11 +69,10 @@ func (rss *RandomSecretSink) Add(actualSecret string) (randomSecret string, err 
 		delete(rss.secretStore, oldestData.actualSecret)
 	}
 
-	guid, err := uuid.NewRandom()
+	randomSecret, err = randstring.Generate(randomLen)
 	if err != nil {
 		return "", err
 	}
-	randomSecret = guid.String()[:randomLen]
 
 	secretData = &RandomSecretData{
 		actualSecret: actualSecret,

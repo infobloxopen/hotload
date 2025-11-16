@@ -1,10 +1,10 @@
-FROM golang:1.23 AS builder
+FROM golang:1.24 AS builder
 WORKDIR /go/src/github.com/infobloxopen/hotload/
 COPY . .
 
 # build integration test binary
 RUN make build-test
 
-FROM golang:1.23 AS runner
-COPY --from=builder /go/src/github.com/infobloxopen/hotload/integrationtests.test .
+FROM golang:1.24 AS runner
+COPY --from=builder /go/src/github.com/infobloxopen/hotload/integrationtests/integrationtests.test .
 

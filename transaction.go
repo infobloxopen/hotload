@@ -34,11 +34,14 @@ func (t *managedTx) Rollback() error {
 
 func observeSQLStmtsSummary(ctx context.Context, execStmtsCounter, queryStmtsCounter int64) {
 	labels := GetExecLabelsFromContext(ctx)
-	service := labels[metrics.GRPCServiceKey]
-	method := labels[metrics.GRPCMethodKey]
+	var grpcServiceStr, grpcMethodStr string
+	if labels != nil {
+		grpcServiceStr = labels[metrics.GRPCServiceKey]
+		grpcMethodStr = labels[metrics.GRPCMethodKey]
+	}
 
-	metrics.SqlStmtsSummary.WithLabelValues(service, method, metrics.ExecStatement).Observe(float64(execStmtsCounter))
-	metrics.SqlStmtsSummary.WithLabelValues(service, method, metrics.QueryStatement).Observe(float64(queryStmtsCounter))
+	metrics.ObserveSQLStmtsSummary(grpcServiceStr, grpcMethodStr, metrics.ExecStatement, float64(execStmtsCounter))
+	metrics.ObserveSQLStmtsSummary(grpcServiceStr, grpcMethodStr, metrics.QueryStatement, float64(queryStmtsCounter))
 }
 
 func (t *managedTx) cleanup() {

@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-// SimpleRegexpLineDiff performs a simple/dumb line-by-line diff
+// simpleRegexpLineDiff performs a simple/dumb line-by-line diff
 // between two arrays of lines.  The expected array of lines are regexp patterns.
 // Returns line(s) which diff.  Empty string is returned if there are no diffs.
-func SimpleRegexpLineDiff(regexpLines []string, gotLines []string) string {
+func simpleRegexpLineDiff(regexpLines []string, gotLines []string) string {
 	maxLen := len(regexpLines)
 	if maxLen < len(gotLines) {
 		maxLen = len(gotLines)

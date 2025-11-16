@@ -9,8 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/infobloxopen/hotload/internal/contextutil"
 	"github.com/infobloxopen/hotload/logger"
-	"github.com/teivah/onecontext"
 )
 
 // managedConn wraps a sql/driver.Conn so that it can be closed by
@@ -121,7 +121,7 @@ func (c *managedConn) ExecContext(ctx context.Context, query string, args []driv
 	}
 	c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
 	c.logf("managedConn.ExecContext", "calling underlying conn.ExecContext()")
-	mergedCtx, cancel := onecontext.Merge(c.ctx, ctx)
+	mergedCtx, cancel := contextutil.Merge(c.ctx, ctx)
 	defer cancel()
 	return conn.ExecContext(mergedCtx, query, args)
 }
@@ -175,16 +175,36 @@ func (c *managedConn) QueryContext(ctx context.Context, query string, args []dri
 	c.incQueryStmtsCounter() //increment the query counter to keep track of the number of query calls
 	c.logf("managedConn.QueryContext", "calling underlying conn.QueryContext()")
 
-	// TODO
-	// We would like to merge the hotload-context with the query-context here,
-	// and then cancel the merged-context to prevent goroutine-leaks
-	// (similar to ExecContext() above).
-	// However the Rows object returned seems to contain the merged-context.
-	// Canceling the merged-context here invalidates the returned Rows object,
-	// and causes any cursor iteration of the returned Rows objects to fail
-	// with context-canceled error.
+	// Merge the hotload-context with the query-context so that cancellation of either
+	// will cancel the query. We wrap the returned Rows to call cancel() when Close()
+	// is called, preventing goroutine leaks from the merged context.
+	mergedCtx, cancel := contextutil.Merge(c.ctx, ctx)
+	rows, err := conn.QueryContext(mergedCtx, query, args)
+	if err != nil {
+		cancel() // Clean up immediately on error
+		return nil, err
+	}
 
-	return conn.QueryContext(ctx, query, args)
+	// If rows is nil (some drivers return nil rows on certain queries),
+	// don't wrap it - just cancel immediately to avoid leaking the goroutine
+	if rows == nil {
+		cancel()
+		return nil, nil
+	}
+
+	return &rowsWrapper{
+		Rows:   rows,
+		cancel: cancel,
+	}, nil
+} // rowsWrapper wraps driver.Rows and calls cancel when closed.
+type rowsWrapper struct {
+	driver.Rows
+	cancel context.CancelFunc
+}
+
+func (r *rowsWrapper) Close() error {
+	defer r.cancel() // Clean up merged context goroutine
+	return r.Rows.Close()
 }
 
 func (c *managedConn) Prepare(query string) (driver.Stmt, error) {
