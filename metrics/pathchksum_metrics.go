@@ -7,11 +7,8 @@ import (
 	"path"
 	"strings"
 	"sync"
-	"time"
 
-	"github.com/colega/gaugefuncvec"
 	"github.com/infobloxopen/hotload/logger"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
@@ -22,25 +19,26 @@ var (
 	ErrDuplicatePath = errors.New("duplicate path")
 	ErrPathNotFound  = errors.New("path not found")
 
-	HotloadPathChksumTimestampSecondsName         = "hotload_path_chksum_timestamp_seconds"
-	HotloadPathChksumTimestampSecondsHelp         = "Hotload path checksum last changed (unix timestamp), by path"
-	HotloadPathChksumTimestampSecondsGaugeFuncVec = gaugefuncvec.New(prometheus.GaugeOpts{
-		Name: HotloadPathChksumTimestampSecondsName,
-		Help: HotloadPathChksumTimestampSecondsHelp,
-	}, []string{PathKey})
-
 	crc64Table = crc64.MakeTable(crc64.ECMA)
 
 	defaultPathChksum *pathChksum
 )
 
-func init() {
-	defaultPathChksum = newPathChksum(DefaultFileHasher)
-	prometheus.MustRegister(HotloadPathChksumTimestampSecondsGaugeFuncVec)
+// InitPathChksumMetrics initializes path checksum metrics.
+// This must be called explicitly if you want path checksum metrics.
+// It is not called automatically to avoid prometheus dependencies.
+func InitPathChksumMetrics() {
+	if defaultPathChksum == nil {
+		defaultPathChksum = newPathChksum(DefaultFileHasher)
+	}
 }
 
 // AddToDefaultPathChksum adds a path to the global defaultPathChksum for checksum metrics
 func AddToDefaultPathChksum(pathStr string) error {
+	if defaultPathChksum == nil {
+		// Path checksum metrics not initialized, skip silently
+		return nil
+	}
 	return defaultPathChksum.addPath(pathStr)
 }
 
@@ -115,27 +113,9 @@ func (pthm *pathChksum) addPath(pathStr string) error {
 	}
 	pthm.paths[pathStr] = pathRec
 
-	scraperFn := func() float64 {
-		if !pthm.enabled {
-			return float64(0)
-		}
-
-		newCrc64, err := pthm.fileHasher(pathRec.path)
-		if err != nil {
-			// log error, but continue
-			logger.ErrLogf("PathChksum.scraper", "fileHasher(%s) err=%s", pathRec.path, err)
-		} else if pathRec.crc64 != newCrc64 {
-			pathRec.crc64 = newCrc64
-			pathRec.lastChanged = time.Now().Unix()
-		}
-
-		return float64(pathRec.lastChanged)
-	}
-
-	HotloadPathChksumTimestampSecondsGaugeFuncVec.MustRegister(
-		prometheus.Labels{PathKey: pathStr},
-		scraperFn,
-	)
+	// Note: Prometheus registration removed to eliminate prometheus dependencies.
+	// If you need path checksum metrics, implement a custom solution using
+	// the pathRecord data or integrate with your metrics provider.
 
 	return nil
 }
@@ -144,10 +124,3 @@ func (pthm *pathChksum) addPath(pathStr string) error {
 func CleanPath(pathStr string) string {
 	return path.Clean(strings.TrimSpace(pathStr))
 }
-
-var ExpectHotloadPathChksumTimestampSecondsPreamble = `                                                             
-# HELP hotload_path_chksum_timestamp_seconds Hotload path checksum last changed \(unix timestamp\), by path             
-# TYPE hotload_path_chksum_timestamp_seconds gauge`
-
-var ExpectHotloadPathChksumTimestampSecondsRegexp = `                                                             
-hotload_path_chksum_timestamp_seconds{path="%s"} \d\.\d+e\+\d+`

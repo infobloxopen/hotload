@@ -3,7 +3,7 @@ package internal
 import (
 	"testing"
 
-	"github.com/google/uuid"
+	"github.com/infobloxopen/hotload/internal/randstring"
 )
 
 func TestNonRandomReader(t *testing.T) {
@@ -15,7 +15,7 @@ func TestNonRandomReader(t *testing.T) {
 
 	buf := make([]byte, 523)
 	count, err := nrr.Read(buf)
-	if nrr == nil {
+	if err != nil {
 		t.Errorf("NewNonRandomReader.Read returned err=%v", err)
 	}
 	if count != len(buf) {
@@ -31,29 +31,22 @@ func TestNonRandomReader(t *testing.T) {
 	}
 }
 
-func Test256UniqueGuidsUsingNonRandomReader(t *testing.T) {
-	nrr := NewNonRandomReader(99)
-	uuid.SetRand(nrr)
-	uniqueGuids := make(map[string]struct{})
-	for i := 1; i <= 256; i++ {
-		guid := uuid.New().String()
-		//t.Logf("generated %dth guid=%q", i, guid)
-		_, found := uniqueGuids[guid]
-		if found {
-			t.Errorf("non-unique guid=%q for i=%d", guid, i)
-		} else {
-			uniqueGuids[guid] = struct{}{}
+func TestRandstringGenerate(t *testing.T) {
+	// Test that randstring generates strings of the correct length
+	for _, length := range []int{8, 16, 32} {
+		str, err := randstring.Generate(length)
+		if err != nil {
+			t.Errorf("randstring.Generate(%d) returned error: %v", length, err)
+		}
+		if len(str) != length {
+			t.Errorf("randstring.Generate(%d) returned string of length %d, expected %d", length, len(str), length)
 		}
 	}
 
-	if len(uniqueGuids) != 256 {
-		t.Errorf("len(uniqueGuids)=%d but should be 256", len(uniqueGuids))
-	}
-
-	guid := uuid.New().String()
-	//t.Logf("generated 257th guid=%q", guid)
-	_, found := uniqueGuids[guid]
-	if !found {
-		t.Errorf("257th guid=%q should not be unique", guid)
+	// Test that multiple calls generate different strings
+	str1, _ := randstring.Generate(16)
+	str2, _ := randstring.Generate(16)
+	if str1 == str2 {
+		t.Errorf("randstring.Generate produced identical strings: %s", str1)
 	}
 }

@@ -3,130 +3,253 @@ package hotload_test
 import (
 	"database/sql"
 	"database/sql/driver"
+	"io"
+	"log"
 	"os"
+	"strings"
+	"testing"
 
-	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/infobloxopen/hotload"
 	"github.com/infobloxopen/hotload/fsnotify"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/infobloxopen/hotload/logger"
 )
 
-func getDriverFromSqlMock() driver.Driver {
-	littleBuddy, mock, _ := sqlmock.NewWithDSN("user=pqgotest dbname=pqgotest sslmode=verify-full")
-	mockDriver = mock
-	return littleBuddy.Driver()
-}
-
-func getRandomDriver() driver.Driver {
-	db, _, _ := sqlmock.New()
-	return db.Driver()
-}
-
-var mockDriver sqlmock.Sqlmock
 var configFile string
 var configFileDir string
 
-var _ = BeforeSuite(func() {
-	driver := getDriverFromSqlMock()
+func testLogger(args ...any) {
+	log.Println(args...)
+}
 
-	if driver == nil {
-		Fail("driver is nil, boo!")
-	}
+func TestMain(m *testing.M) {
+	logger.WithLogger(testLogger)
+	logger.WithErrLogger(testLogger)
 
-	hotload.RegisterSQLDriver("sqlmock", driver)
-	Expect(hotload.SQLDrivers()).To(ContainElement("sqlmock"))
+	driver := &dummyDriver{}
+	hotload.RegisterSQLDriver("dummydriver", driver)
+
 	var err error
 	configFile, err = os.Getwd()
-	Expect(err).ToNot(HaveOccurred())
+	if err != nil {
+		log.Fatalf("Failed to get working directory: %v", err)
+	}
 	configFileDir = configFile + "/testdata/"
 	configFile += "/testdata/myconfig.txt"
-})
 
-var _ = Describe("Driver", func() {
-	Context("RegisterSQLDriver", func() {
-		It("Should panic when registering the same driver twice", func() {
-			driver := getRandomDriver()
-			Expect(func() { hotload.RegisterSQLDriver("sqlmock", driver) }).
-				To(PanicWith(MatchRegexp("Register called twice for driver")))
-		})
+	os.Exit(m.Run())
+}
 
-		It("Should panic on nil driver", func() {
-			Expect(func() { hotload.RegisterSQLDriver("", nil) }).
-				To(PanicWith(MatchRegexp("Register driver is nil")))
-		})
-	})
+// dummyDriver is a minimal driver.Driver implementation for testing hotload's logic
+type dummyDriver struct{}
 
-	Context("RegisterStrategy", func() {
-		It("Should panic when registering the same strategy twice", func() {
-			strat := fsnotify.NewStrategy()
-			Expect(func() { hotload.RegisterStrategy("fsnotify", strat) }).
-				To(PanicWith(MatchRegexp("RegisterStrategy called twice for strategy")))
-		})
+func (d *dummyDriver) Open(name string) (driver.Conn, error) {
+	return &dummyConn{dsn: name}, nil
+}
 
-		It("Should panic on nil driver", func() {
-			Expect(func() { hotload.RegisterStrategy("", nil) }).
-				To(PanicWith(MatchRegexp("strategy is nil")))
-		})
-	})
+type dummyConn struct {
+	dsn string
+}
 
-	Context("Open", func() {
-		It("Should throw an error with unknown driver", func() {
-			db, err := sql.Open("hotload", "fsnotify://sqlmaybe?"+configFile)
-			Expect(err).ToNot(HaveOccurred())
-			err = db.Ping()
-			Expect(err).To(HaveOccurred())
-			Expect(err).To(MatchError(hotload.ErrUnknownDriver))
+func (c *dummyConn) Prepare(query string) (driver.Stmt, error) {
+	return &dummyStmt{}, nil
+}
 
-		})
+func (c *dummyConn) Close() error {
+	return nil
+}
 
-		It("Should not throw an error with a registered driver and strategy", func() {
-			db, err := sql.Open("hotload", "fsnotify://sqlmock"+configFile)
-			Expect(err).ToNot(HaveOccurred())
+func (c *dummyConn) Begin() (driver.Tx, error) {
+	return &dummyTx{}, nil
+}
 
-			Expect(db.Ping()).ToNot(HaveOccurred())
-		})
+func (c *dummyConn) Ping(ctx interface{}) error {
+	return nil
+}
 
-		It("Should throw an unsupported strategy error", func() {
-			db, err := sql.Open("hotload", "fstransmogrify://sqlmock/"+configFile)
-			err = db.Ping()
-			Expect(err).To(HaveOccurred())
-			Expect(err).To(MatchError(hotload.ErrUnsupportedStrategy))
-		})
+type dummyStmt struct{}
 
-		It("Should throw an error if it can't find the config file", func() {
-			db, err := sql.Open("hotload", "fsnotify://sqlmock/temple/run/2021-edition")
-			err = db.Ping()
-			Expect(err).To(HaveOccurred())
-		})
+func (s *dummyStmt) Close() error {
+	return nil
+}
 
-		It("Should throw an error the url is unparseable", func() {
-			db, err := sql.Open("hotload", "://")
-			err = db.Ping()
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("missing protocol scheme"))
-		})
+func (s *dummyStmt) NumInput() int {
+	return 0
+}
 
-		//It("Should close my connection when the connection information changes", func() {
-		//	db, err := sql.Open("hotload", "fsnotify://sqlmock"+configFileDir+"urconfig.txt")
-		//	Expect(err).ToNot(HaveOccurred())
-		//
-		//	Expect(db.Ping()).ToNot(HaveOccurred())
-		//	// Open dat
-		//	// Do a thing
-		//	// change connection file
-		//	mockDriver.ExpectBegin()
-		//	mockDriver.ExpectExec("SELECT 1")
-		//	mockDriver.ExpectCommit()
-		//	tx, err := db.Begin()
-		//	Expect(err).ToNot(HaveOccurred())
-		//	tx.Exec("SELECT 1")
-		//	err = ioutil.WriteFile(configFileDir+"urconfig.txt", []byte("user=pqgotest dbname=pqgotestorooni sslmode=verify-full"), 0644)
-		//	Expect(err).ToNot(HaveOccurred())
-		//	go func () {
-		//		tx.Commit()
-		//		Expect(mockDriver.ExpectationsWereMet()).ToNot(HaveOccurred())
-		//	}()
-		//})
-	})
-})
+func (s *dummyStmt) Exec(args []driver.Value) (driver.Result, error) {
+	return &dummyResult{}, nil
+}
+
+func (s *dummyStmt) Query(args []driver.Value) (driver.Rows, error) {
+	return &dummyRows{}, nil
+}
+
+type dummyTx struct{}
+
+func (t *dummyTx) Commit() error {
+	return nil
+}
+
+func (t *dummyTx) Rollback() error {
+	return nil
+}
+
+type dummyResult struct{}
+
+func (r *dummyResult) LastInsertId() (int64, error) {
+	return 0, nil
+}
+
+func (r *dummyResult) RowsAffected() (int64, error) {
+	return 0, nil
+}
+
+type dummyRows struct{}
+
+func (r *dummyRows) Columns() []string {
+	return []string{}
+}
+
+func (r *dummyRows) Close() error {
+	return nil
+}
+
+func (r *dummyRows) Next(dest []driver.Value) error {
+	return io.EOF
+}
+
+func TestRegisterSQLDriver_PanicOnDuplicate(t *testing.T) {
+	driver := &dummyDriver{}
+	defer func() {
+		if r := recover(); r != nil {
+			msg := r.(string)
+			if !strings.Contains(msg, "Register called twice for driver") {
+				t.Fatalf("Expected panic message to contain 'Register called twice for driver' but got: %s", msg)
+			}
+		} else {
+			t.Fatal("Expected RegisterSQLDriver to panic when registering duplicate driver")
+		}
+	}()
+	hotload.RegisterSQLDriver("dummydriver", driver)
+}
+
+func TestRegisterSQLDriver_PanicOnNilDriver(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			msg := r.(string)
+			if !strings.Contains(msg, "Register driver is nil") {
+				t.Fatalf("Expected panic message to contain 'Register driver is nil' but got: %s", msg)
+			}
+		} else {
+			t.Fatal("Expected RegisterSQLDriver to panic with nil driver")
+		}
+	}()
+	hotload.RegisterSQLDriver("", nil)
+}
+
+func TestRegisterStrategy_PanicOnDuplicate(t *testing.T) {
+	strat := fsnotify.NewStrategy()
+	defer func() {
+		if r := recover(); r != nil {
+			msg := r.(string)
+			if !strings.Contains(msg, "RegisterStrategy called twice for strategy") {
+				t.Fatalf("Expected panic message to contain 'RegisterStrategy called twice for strategy' but got: %s", msg)
+			}
+		} else {
+			t.Fatal("Expected RegisterStrategy to panic when registering duplicate strategy")
+		}
+	}()
+	hotload.RegisterStrategy("fsnotify", strat)
+}
+
+func TestRegisterStrategy_PanicOnNilStrategy(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			msg := r.(string)
+			if !strings.Contains(msg, "strategy is nil") {
+				t.Fatalf("Expected panic message to contain 'strategy is nil' but got: %s", msg)
+			}
+		} else {
+			t.Fatal("Expected RegisterStrategy to panic with nil strategy")
+		}
+	}()
+	hotload.RegisterStrategy("", nil)
+}
+
+func TestOpen_ErrorWithUnknownDriver(t *testing.T) {
+	db, err := sql.Open("hotload", "fsnotify://sqlmaybe?"+configFile)
+	if err != nil {
+		t.Fatalf("Expected no error opening db but got: %v", err)
+	}
+	err = db.Ping()
+	if err == nil {
+		t.Fatal("Expected error when pinging with unknown driver")
+	}
+	if err != hotload.ErrUnknownDriver {
+		t.Fatalf("Expected ErrUnknownDriver but got: %v", err)
+	}
+}
+
+func TestOpen_NoErrorWithRegisteredDriver(t *testing.T) {
+	db, err := sql.Open("hotload", "fsnotify://dummydriver"+configFile)
+	if err != nil {
+		t.Fatalf("Expected no error opening db but got: %v", err)
+	}
+
+	if err := db.Ping(); err != nil {
+		t.Fatalf("Expected no error pinging db but got: %v", err)
+	}
+}
+
+func TestOpen_UnsupportedStrategy(t *testing.T) {
+	db, err := sql.Open("hotload", "fstransmogrify://dummydriver/"+configFile)
+	if err != nil {
+		t.Fatalf("Expected no error opening db but got: %v", err)
+	}
+	err = db.Ping()
+	if err == nil {
+		t.Fatal("Expected error with unsupported strategy")
+	}
+	if err != hotload.ErrUnsupportedStrategy {
+		t.Fatalf("Expected ErrUnsupportedStrategy but got: %v", err)
+	}
+}
+
+func TestOpen_ErrorWhenConfigFileNotFound(t *testing.T) {
+	db, err := sql.Open("hotload", "fsnotify://dummydriver/temple/run/2021-edition")
+	if err != nil {
+		t.Fatalf("Expected no error opening db but got: %v", err)
+	}
+	err = db.Ping()
+	if err == nil {
+		t.Fatal("Expected error when config file not found")
+	}
+}
+
+func TestOpen_ErrorWithUnparseableURL(t *testing.T) {
+	db, err := sql.Open("hotload", "://")
+	if err != nil {
+		t.Fatalf("Expected no error opening db but got: %v", err)
+	}
+	err = db.Ping()
+	if err == nil {
+		t.Fatal("Expected error with unparseable URL")
+	}
+	if !strings.Contains(err.Error(), "missing protocol scheme") {
+		t.Fatalf("Expected error message to contain 'missing protocol scheme' but got: %v", err)
+	}
+}
+
+func TestSQLDrivers_ContainsDummyDriver(t *testing.T) {
+	drivers := hotload.SQLDrivers()
+	found := false
+	for _, d := range drivers {
+		if d == "dummydriver" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("Expected SQLDrivers to contain 'dummydriver'")
+	}
+}

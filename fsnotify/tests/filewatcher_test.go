@@ -1,4 +1,4 @@
-package fsnotify
+package fsnotify_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	rfsnotify "github.com/fsnotify/fsnotify"
+	"github.com/infobloxopen/hotload/fsnotify"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -87,7 +88,7 @@ var _ = Describe("FileWatcher", func() {
 		paramsParsed = "host=a login=b password=c"
 	)
 
-	s := NewStrategy()
+	s := fsnotify.NewStrategy()
 	DescribeTable("Watch",
 		func(tt test) {
 			if tt.setup != nil {
@@ -228,12 +229,12 @@ var _ = Describe("FileWatcher", func() {
 	)
 
 	Context("run", func() {
-		var strat *Strategy
+		var strat *fsnotify.Strategy
 		var watcher *testWatcher
 		BeforeEach(func() {
-			strat = NewStrategy()
+			strat = fsnotify.NewStrategy()
 			watcher = newTestWatcher()
-			strat.watcher = watcher
+			strat.SetWatcher(watcher)
 		})
 		It("Should not respond to chmod events", func() {
 			// add only a bad path to the testWatcher

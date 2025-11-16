@@ -9,8 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/infobloxopen/hotload/internal/contextutil"
 	"github.com/infobloxopen/hotload/logger"
-	"github.com/teivah/onecontext"
 )
 
 // managedConn wraps a sql/driver.Conn so that it can be closed by
@@ -121,7 +121,7 @@ func (c *managedConn) ExecContext(ctx context.Context, query string, args []driv
 	}
 	c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
 	c.logf("managedConn.ExecContext", "calling underlying conn.ExecContext()")
-	mergedCtx, cancel := onecontext.Merge(c.ctx, ctx)
+	mergedCtx, cancel := contextutil.Merge(c.ctx, ctx)
 	defer cancel()
 	return conn.ExecContext(mergedCtx, query, args)
 }

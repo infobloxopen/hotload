@@ -26,7 +26,7 @@ get-ginkgo:
 test: vet get-ginkgo go-test
 
 go-test:
-	go test -race github.com/infobloxopen/hotload \
+	go test -tags=unit_tests -race github.com/infobloxopen/hotload \
 		github.com/infobloxopen/hotload/fsnotify \
 		github.com/infobloxopen/hotload/internal \
 		github.com/infobloxopen/hotload/metrics \
@@ -48,8 +48,8 @@ integ-test-image: .integ-test-image-$(GIT_COMMIT)
 deploy-integration-tests:
 	helm upgrade hotload-integration-tests integrationtests/helm/hotload-integration-tests -i --set image.tag=$(GIT_COMMIT)
 
-build-test: vet get-ginkgo
-	go test -c ./integrationtests
+build-test: vet
+	cd integrationtests && go test -tags=unit_tests -c .
 
 kind-create-cluster:
 	kind create cluster
@@ -73,4 +73,4 @@ postgres-docker-compose-down:
 
 # Requires postgres db, see target postgres-docker-compose-up
 local-integration-tests:
-	HOTLOAD_PATH_CHKSUM_METRICS_ENABLE=true go test -v -race -timeout=3m -count=1 github.com/infobloxopen/hotload/integrationtests
+	cd integrationtests && HOTLOAD_PATH_CHKSUM_METRICS_ENABLE=true go test -tags=unit_tests -v -race -timeout=3m -count=1

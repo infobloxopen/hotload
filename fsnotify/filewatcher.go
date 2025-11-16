@@ -14,7 +14,6 @@ import (
 	"github.com/infobloxopen/hotload/internal"
 	"github.com/infobloxopen/hotload/logger"
 	"github.com/infobloxopen/hotload/metrics"
-	"github.com/pkg/errors"
 )
 
 func init() {
@@ -64,7 +63,7 @@ type pathWatch struct {
 func (s *Strategy) readConfigFile(path string) (v []byte, err error) {
 	v, err = os.ReadFile(path)
 	if err != nil {
-		return nil, errors.Wrapf(err, "could not read %v", path)
+		return nil, fmt.Errorf("could not read %v: %w", path, err)
 	}
 	v = []byte(strings.TrimSpace(string(v)))
 	return
@@ -73,7 +72,7 @@ func (s *Strategy) readConfigFile(path string) (v []byte, err error) {
 func (s *Strategy) resync(w watcher, pth string) (string, error) {
 	s.logf("fsnotify", "resync path: '%s'", pth)
 	err := w.Remove(pth)
-	if err != nil && !errors.Is(err, rfsnotify.ErrNonExistentWatch) {
+	if err != nil && !isError(err, rfsnotify.ErrNonExistentWatch) {
 		return "", err
 	}
 	bs, err := s.readConfigFile(pth)
