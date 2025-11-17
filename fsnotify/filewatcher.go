@@ -85,6 +85,9 @@ func (s *Strategy) resync(w watcher, pth string) (string, error) {
 
 func (s *Strategy) runLoop() {
 	failedPaths := make(map[string]struct{})
+	ticker := time.NewTicker(resyncPeriod)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case ev, ok := <-s.watcher.GetEvents():
@@ -114,7 +117,7 @@ func (s *Strategy) runLoop() {
 			}
 			s.logf("fsnotify.runLoop", "got error: %s", err.Error())
 
-		case <-time.After(resyncPeriod):
+		case <-ticker.C:
 			s.logf("fsnotify.runLoop", "resyncPeriod %s timedout", resyncPeriod.String())
 			var fixedPaths []string
 			for pth := range failedPaths {
