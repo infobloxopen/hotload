@@ -27,6 +27,18 @@ type Provider interface {
 
 	// ObserveSQLStmtsSummary records SQL statement counts per transaction
 	ObserveSQLStmtsSummary(grpcService, grpcMethod, stmtType string, count float64)
+
+	// IncHotloadConnectionsDrained increments the drained connections counter
+	IncHotloadConnectionsDrained(driverName string)
+
+	// IncHotloadConnectionsKilled increments the killed connections counter with reason
+	IncHotloadConnectionsKilled(driverName, reason string)
+
+	// SetHotloadEpoch sets the current epoch gauge
+	SetHotloadEpoch(driverName string, epoch uint64)
+
+	// ObserveHotloadReloadSeconds records the duration of a DSN reload
+	ObserveHotloadReloadSeconds(driverName string, duration float64)
 }
 
 var currentProvider Provider = &NoOpProvider{}
@@ -64,11 +76,50 @@ func ObserveSQLStmtsSummary(grpcService, grpcMethod, stmtType string, count floa
 	currentProvider.ObserveSQLStmtsSummary(grpcService, grpcMethod, stmtType, count)
 }
 
+// IncHotloadConnectionsDrained calls the current provider
+func IncHotloadConnectionsDrained(driverName string) {
+	currentProvider.IncHotloadConnectionsDrained(driverName)
+}
+
+// IncHotloadConnectionsKilled calls the current provider
+func IncHotloadConnectionsKilled(driverName, reason string) {
+	currentProvider.IncHotloadConnectionsKilled(driverName, reason)
+}
+
+// SetHotloadEpoch calls the current provider
+func SetHotloadEpoch(driverName string, epoch uint64) {
+	currentProvider.SetHotloadEpoch(driverName, epoch)
+}
+
+// ObserveHotloadReloadSeconds calls the current provider
+func ObserveHotloadReloadSeconds(driverName string, duration float64) {
+	currentProvider.ObserveHotloadReloadSeconds(driverName, duration)
+}
+
 // NoOpProvider is a no-op implementation of Provider
 type NoOpProvider struct{}
 
-func (n *NoOpProvider) ObserveHotloadModtimeLatencyHistogram(strategy, path string, val float64) {}
-func (n *NoOpProvider) IncHotloadChangeTotal(url string)                                         {}
-func (n *NoOpProvider) SetHotloadLastChangedTimestampSeconds(url string, val float64)            {}
+func (n *NoOpProvider) ObserveHotloadModtimeLatencyHistogram(strategy, path string, val float64) {
+	// No-op implementation
+}
+func (n *NoOpProvider) IncHotloadChangeTotal(url string) {
+	// No-op implementation
+}
+func (n *NoOpProvider) SetHotloadLastChangedTimestampSeconds(url string, val float64) {
+	// No-op implementation
+}
 func (n *NoOpProvider) ObserveSQLStmtsSummary(grpcService, grpcMethod, stmtType string, count float64) {
+	// No-op implementation
+}
+func (n *NoOpProvider) IncHotloadConnectionsDrained(driverName string) {
+	// No-op implementation
+}
+func (n *NoOpProvider) IncHotloadConnectionsKilled(driverName, reason string) {
+	// No-op implementation
+}
+func (n *NoOpProvider) SetHotloadEpoch(driverName string, epoch uint64) {
+	// No-op implementation
+}
+func (n *NoOpProvider) ObserveHotloadReloadSeconds(driverName string, duration float64) {
+	// No-op implementation
 }

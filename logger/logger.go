@@ -33,3 +33,10 @@ func Logf(prefix, format string, args ...any) {
 	logMsg := fmt.Sprintf(format, args...)
 	loggr(prefix, logMsg)
 }
+
+// ErrLogf formats and prints error message to global standard logger
+func ErrLogf(prefix, format string, args ...any) {
+	loggr := GetLogger()
+	logMsg := fmt.Sprintf(format, args...)
+	loggr(prefix, "ERROR: "+logMsg)
+}

@@ -20,7 +20,7 @@ import (
     "github.com/infobloxopen/hotload"
 
     // this import registers the fsnotify hotload strategy
-    _ "github.com/infobloxopen/hotload/fsnotify"
+    _ "github.com/infobloxopen/hotload/strategy/fsnotify"
 
     // this import registers the postgres driver with the sql package
     "github.com/lib/pq"
@@ -89,11 +89,73 @@ By default, the hotload driver gracefully closes connections to the underlying d
 Adding `forceKill=true` to your DSN will cause the hotload driver to close the underlying connection manually when a 
 change to the connection information is detected.
 
-
 For example:
 ```
 db, err := sql.Open("hotload", "fsnotify://postgres/tmp/myconfig.txt?forceKill=true")
 ```
+
+# Connection Draining
+
+Hotload supports graceful connection draining when the DSN changes. This allows in-flight database operations to complete before switching to the new DSN.
+
+## Configuration Options
+
+- **`drainTimeout`**: Duration to wait for connections to become idle before force-closing them (default: `30s`)
+- **`forceKill`**: Whether to force-close connections after drainTimeout expires (default: `true`)
+- **`debounce`**: Duration to suppress rapid DSN changes (default: `250ms`)
+- **`preconnect`**: Whether to test the new DSN before promoting it (default: `false`)
+- **`credentialOnlyReload`**: Skip connection draining when only username/password changes (default: `false`)
+
+Example with custom drain settings:
+```go
+db, err := sql.Open("hotload", "fsnotify://postgres/tmp/myconfig.txt?drainTimeout=2s&forceKill=true&debounce=500ms")
+```
+
+### Smart DSN Comparison (`credentialOnlyReload`)
+
+When enabled, hotload intelligently detects whether a DSN change is "structural" (host, port, database, options) or "credential-only" (username, password). Credential-only changes do NOT trigger connection draining, allowing in-flight queries to complete without interruption.
+
+**Use case:** Password rotation without query disruption.
+
+```go
+// Enable credential-only reload optimization
+db, err := sql.Open("hotload", 
+    "fsnotify://postgres/tmp/myconfig.txt?credentialOnlyReload=true&drainTimeout=10s")
+```
+
+**Behavior:**
+- **Credential-only change** (username/password): Connections stay alive, no draining
+- **Structural change** (host/port/database/options): Connections drained normally
+
+Example scenario:
+1. Current DSN: `postgresql://user1:pass1@localhost:5432/mydb`
+2. Update to: `postgresql://user1:pass2@localhost:5432/mydb` ← **Credential only**
+3. With `credentialOnlyReload=true`: In-flight queries continue uninterrupted
+4. New connections immediately use `pass2`
+
+If you then change:
+1. Update to: `postgresql://user1:pass2@localhost:5433/mydb` ← **Port changed (structural)**
+2. Connections are drained normally (port change requires new connections)
+
+**Default behavior (`credentialOnlyReload=false`):** All DSN changes trigger connection draining for maximum safety.
+
+## Connection Lifecycle
+
+When a DSN change is detected:
+1. New connections use the new DSN (new epoch)
+2. Old connections are monitored for in-flight operations
+3. If `credentialOnlyReload=true` and only credentials changed: Skip draining (connections continue)
+4. Otherwise: Once operations complete (or `drainTimeout` expires), connections are closed
+5. Metrics track gracefully drained vs force-killed connections
+
+## Metrics
+
+Hotload exposes the following Prometheus metrics for connection lifecycle:
+
+- `hotload_connections_drained_total{driver}`: Connections gracefully closed
+- `hotload_connections_killed_total{driver,reason}`: Connections force-closed (reason: timeout, error)
+- `hotload_epoch{driver}`: Current DSN version/epoch
+- `hotload_reload_seconds{driver}`: Duration of DSN switchover
 
 # How To Run Integration Tests Locally
 ```

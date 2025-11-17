@@ -1,5 +1,4 @@
-GIT_COMMIT ?= $(shell git describe --dirty=-unsupported --always --tags || echo pre-commit)
-IMAGE_NAME ?= hotload-integration-tests:$(GIT_COMMIT)
+.PHONY: all get fmt tidy no-diff vet build test unit-test integration-test ci-test clean check-deps
 
 get:
 	go get -t ./...
@@ -20,57 +19,33 @@ vet: fmt
 build: vet
 	go build ./...
 
-get-ginkgo:
-	go get github.com/onsi/ginkgo/v2/ginkgo
+# Run unit tests only (fast, no Docker required)
+unit-test: vet
+	go test -v -short -race ./...
 
-test: vet get-ginkgo go-test
+# Run integration tests (requires Docker)
+integration-test:
+	cd test/integration && go test -v -race -timeout=5m
 
-go-test:
-	go test -tags=unit_tests -race github.com/infobloxopen/hotload \
-		github.com/infobloxopen/hotload/fsnotify \
-		github.com/infobloxopen/hotload/internal \
-		github.com/infobloxopen/hotload/metrics \
-		github.com/infobloxopen/hotload/modtime
+# Run all tests
+test: unit-test integration-test
 
+# CI test target with formatting and diff checks
+ci-test: fmt tidy no-diff check-deps unit-test
 
-# test target which includes the no-diff fail condition
-ci-test: fmt tidy no-diff test
+# Check that only expected dependencies are present
+check-deps:
+	@echo "Checking go.mod dependencies..."
+	@DIRECT_DEPS=$$(go list -json -m all | jq -s '.[1:] | map(select(.Indirect != true)) | .[].Path' -r); \
+	EXPECTED="github.com/fsnotify/fsnotify"; \
+	if [ "$$DIRECT_DEPS" != "$$EXPECTED" ]; then \
+		echo "❌ Unexpected direct dependencies found!"; \
+		echo "Expected: $$EXPECTED"; \
+		echo "Found:    $$DIRECT_DEPS"; \
+		exit 1; \
+	fi; \
+	echo "✅ Dependencies check passed: only expected dependencies present"
 
-test-docker:
-	docker build -f Dockerfile.test .
-
-.integ-test-image-$(GIT_COMMIT):
-	docker build -f Dockerfile.integrationtest . -t $(IMAGE_NAME)
-
-integ-test-image: .integ-test-image-$(GIT_COMMIT)
-
-# this'll run outside of the build container
-deploy-integration-tests:
-	helm upgrade hotload-integration-tests integrationtests/helm/hotload-integration-tests -i --set image.tag=$(GIT_COMMIT)
-
-build-test: vet
-	cd integrationtests && go test -tags=unit_tests -c .
-
-kind-create-cluster:
-	kind create cluster
-
-kind-load:
-	kind load docker-image $(IMAGE_NAME)
-
-ci-integration-tests: integ-test-image kind-load deploy-integration-tests
-	(helm test --timeout=600s hotload-integration-tests || (kubectl logs hotload-integration-tests-job && exit 1)) && kubectl logs hotload-integration-tests-job
-
-delete-all:
-	helm uninstall hotload-integration-tests || true
-	kubectl delete pvc --all || true
-	kubectl delete pods --all || true
-
-postgres-docker-compose-up:
-	cd integrationtests/docker; docker compose up --detach
-
-postgres-docker-compose-down:
-	cd integrationtests/docker; docker compose down
-
-# Requires postgres db, see target postgres-docker-compose-up
-local-integration-tests:
-	cd integrationtests && HOTLOAD_PATH_CHKSUM_METRICS_ENABLE=true go test -tags=unit_tests -v -race -timeout=3m -count=1
+clean:
+	go clean -testcache
+	rm -f .integ-test-image-*

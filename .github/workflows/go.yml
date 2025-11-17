@@ -2,26 +2,39 @@ name: Go
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, v2 ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, v2 ]
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - name: Unit Tests
-      run: make test-docker
-
-  integration-tests:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@master
-    - uses: engineerd/setup-kind@v0.5.0
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
       with:
-        version: "v0.11.1"
-    - name: Integration Tests
+        go-version: '1.21'
+    
+    - name: Verify formatting
       run: |
-        kubectl cluster-info
-        make ci-integration-tests
+        go fmt ./...
+        git diff --exit-code
+    
+    - name: Run go mod tidy
+      run: |
+        go mod tidy
+        git diff --exit-code
+    
+    - name: Check dependencies
+      run: make check-deps
+    
+    - name: Vet
+      run: go vet ./...
+    
+    - name: Unit Tests
+      run: go test -v -short -race ./...
+    
+    - name: Integration Tests (Docker-in-Docker)
+      run: cd test/integration && go test -v -race -timeout=5m

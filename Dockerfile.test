@@ -1,4 +1,0 @@
-FROM golang:1.24
-WORKDIR /go/src/github.com/infobloxopen/hotload
-COPY . .
-RUN make ci-test
