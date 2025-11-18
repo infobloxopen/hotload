@@ -244,21 +244,23 @@ func (c *managedConn) ResetSession(ctx context.Context) error {
 
 func (c *managedConn) Close() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	err := c.close()
-
 	if err == nil {
 		c.killed = true
 	}
 	c.logf("managedConn.Close", "closed")
+	afterClose := c.afterClose
+	c.mu.Unlock()
+
+	// Call afterClose callback outside the mutex to avoid deadlock
+	if afterClose != nil {
+		afterClose(c)
+	}
 
 	return err
 }
 
 func (c *managedConn) close() error {
-	if c.afterClose != nil {
-		defer c.afterClose(c)
-	}
 	c.logf("managedConn.close", "calling underlying Close()")
 	return c.conn.Close()
 }

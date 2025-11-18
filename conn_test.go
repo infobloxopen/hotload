@@ -44,6 +44,240 @@ var _ = Describe("managedConn", func() {
 		Consistently(readLockAcquired).Should(BeFalse())
 	})
 
+	It("Should call afterClose callback outside mutex to avoid deadlock", func() {
+		// This test verifies that the afterClose callback is executed outside the managedConn mutex
+		// to prevent AB-BA deadlock with chanGroup mutex
+
+		callbackMutex := &sync.Mutex{}
+		callbackStarted := make(chan bool)
+		callbackExecuted := false
+		var callbackConn *managedConn
+
+		// Create a callback that simulates chanGroup.removeMgdConn behavior
+		afterCloseCallback := func(conn *managedConn) {
+			callbackStarted <- true
+			callbackMutex.Lock()
+			defer callbackMutex.Unlock()
+			callbackExecuted = true
+			callbackConn = conn
+		}
+
+		mc := newManagedConn(context.Background(), "dsn", "redactDsn", mockDriverConn{}, afterCloseCallback)
+
+		// Lock the callback mutex to simulate chanGroup mutex being held
+		callbackMutex.Lock()
+
+		// Start Close in a goroutine
+		closeErr := make(chan error, 1)
+		go func() {
+			defer GinkgoRecover()
+			err := mc.Close()
+			closeErr <- err
+		}()
+
+		// Callback should start (proving Close() released its mutex)
+		select {
+		case <-callbackStarted:
+			// Good, callback started, meaning Close() released managedConn mutex
+		case <-time.After(1 * time.Second):
+			Fail("Callback should have started, indicating Close() released its mutex")
+		}
+
+		// Callback should not have completed yet due to mutex
+		Expect(callbackExecuted).To(BeFalse(), "Callback should be waiting for mutex")
+
+		// Release callback mutex
+		callbackMutex.Unlock()
+
+		// Now Close() should complete
+		select {
+		case err := <-closeErr:
+			Expect(err).ShouldNot(HaveOccurred())
+		case <-time.After(1 * time.Second):
+			Fail("Close() should have completed")
+		}
+
+		// Callback should have executed
+		Eventually(func() bool {
+			callbackMutex.Lock()
+			defer callbackMutex.Unlock()
+			return callbackExecuted
+		}, "1s", "10ms").Should(BeTrue(), "Callback should execute")
+
+		// Verify callback received correct connection
+		Expect(callbackConn).To(Equal(mc))
+	})
+
+	It("Should not deadlock when Close and Reset are called concurrently", func() {
+		var wg sync.WaitGroup
+		numGoroutines := 10
+
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(2)
+
+			go func() {
+				defer GinkgoRecover()
+				defer wg.Done()
+
+				mc := newManagedConn(context.Background(), "dsn", "redactDsn", mockDriverConn{}, nil)
+
+				// Simulate concurrent Reset and Close
+				go func() {
+					defer GinkgoRecover()
+					defer wg.Done()
+					mc.Reset(true)
+				}()
+
+				mc.Close()
+			}()
+		}
+
+		// This should complete without deadlock
+		done := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			// Success - no deadlock
+		case <-time.After(5 * time.Second):
+			Fail("Deadlock detected: concurrent Reset and Close operations did not complete")
+		}
+	})
+
+	It("Should preserve afterClose callback functionality", func() {
+		callbackExecuted := false
+		var callbackConn *managedConn
+
+		afterCloseCallback := func(conn *managedConn) {
+			callbackExecuted = true
+			callbackConn = conn
+		}
+
+		mc := newManagedConn(context.Background(), "dsn", "redactDsn", mockDriverConn{}, afterCloseCallback)
+
+		err := mc.Close()
+		Expect(err).ShouldNot(HaveOccurred())
+
+		// Callback should be executed
+		Eventually(func() bool {
+			return callbackExecuted
+		}, "1s", "10ms").Should(BeTrue(), "afterClose callback should be executed")
+
+		Expect(callbackConn).To(Equal(mc), "Callback should receive correct managedConn")
+	})
+
+	It("Should not deadlock in hdriver.Open processNewValue vs managedConn.Close scenario", func() {
+		// This test simulates the exact deadlock scenario described:
+		// Thread A (hdriver.Open -> processNewValue):
+		//   - Acquires cg.mu.Lock() in processNewValue
+		//   - Calls c.Reset(true) which waits for c.mu.Lock()
+		// Thread B (managedConn.Close):
+		//   - Acquires c.mu.Lock() in Close()
+		//   - Calls afterClose -> removeMgdConn which waits for cg.mu.Lock()
+
+		var cgMutex sync.RWMutex
+		var removedConn *managedConn
+		callbackExecuted := false
+
+		// Channels to coordinate the deadlock scenario
+		threadAHasLock := make(chan struct{})
+		threadBHasLock := make(chan struct{})
+		threadAComplete := make(chan struct{})
+		threadBComplete := make(chan struct{})
+
+		// Simulate chanGroup.removeMgdConn callback that needs cg.mu
+		afterCloseCallback := func(conn *managedConn) {
+			// This simulates removeMgdConn trying to acquire cg.mu
+			cgMutex.Lock()
+			defer cgMutex.Unlock()
+			removedConn = conn
+			callbackExecuted = true
+		}
+
+		mc := newManagedConn(context.Background(), "dsn", "redactDsn", mockDriverConn{}, afterCloseCallback)
+
+		// Thread A: Simulate processNewValue holding cg.mu and calling Reset()
+		go func() {
+			defer GinkgoRecover()
+			defer close(threadAComplete)
+
+			// Acquire cg.mu (simulating processNewValue critical section)
+			cgMutex.Lock()
+			threadAHasLock <- struct{}{}
+
+			// Sleep to guarantee both threads are running in parallel
+			time.Sleep(100 * time.Millisecond)
+
+			// Wait for Thread B to acquire managedConn mutex
+			select {
+			case <-threadBHasLock:
+				// Thread B has managedConn mutex, now we'll try to acquire it via Reset()
+			case <-time.After(5 * time.Second):
+				cgMutex.Unlock()
+				Fail("Thread B should have acquired managedConn mutex")
+				return
+			}
+
+			// This simulates processNewValue calling c.Reset(true)
+			// In the original deadlock, this would wait for c.mu while holding cg.mu
+			mc.Reset(true)
+
+			cgMutex.Unlock()
+		}()
+
+		// Thread B: Simulate managedConn.Close() calling afterClose callback
+		go func() {
+			defer GinkgoRecover()
+			defer close(threadBComplete)
+
+			// Wait for Thread A to acquire chanGroup mutex
+			select {
+			case <-threadAHasLock:
+				// Thread A has cg.mu, proceed with Close()
+			case <-time.After(5 * time.Second):
+				Fail("Thread A should have acquired chanGroup mutex")
+				return
+			}
+
+			// Signal that we're about to acquire managedConn mutex
+			threadBHasLock <- struct{}{}
+
+			// Sleep to guarantee both threads are running in parallel
+			time.Sleep(100 * time.Millisecond)
+
+			// This calls the actual Close() method which should handle the deadlock scenario
+			// In the original deadlock, this would deadlock when afterClose tries to acquire cg.mu
+			// With our fix, afterClose is called outside the mutex, preventing deadlock
+			err := mc.Close()
+			Expect(err).ShouldNot(HaveOccurred())
+		}()
+
+		// Both threads should complete without deadlock
+		select {
+		case <-threadAComplete:
+			// Thread A completed successfully
+		case <-time.After(10 * time.Second):
+			Fail("Thread A (processNewValue simulation) timed out - potential deadlock detected")
+		}
+
+		select {
+		case <-threadBComplete:
+			// Thread B completed successfully
+		case <-time.After(10 * time.Second):
+			Fail("Thread B (managedConn.Close simulation) timed out - potential deadlock detected")
+		}
+
+		// Verify callback was executed
+		Eventually(func() bool {
+			return callbackExecuted
+		}, "2s", "10ms").Should(BeTrue(), "afterClose callback should execute")
+
+		Expect(removedConn).To(Equal(mc), "Callback should receive correct managedConn")
+	})
+
 	It("Should not leak goroutines when using ExecContext and QueryContext", func() {
 		// Force garbage collection and get baseline
 		runtime.GC()
