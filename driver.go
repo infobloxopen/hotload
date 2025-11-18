@@ -78,6 +78,14 @@ type Strategy interface {
 const forceKill = "forceKill"
 const driverOptions = "driverOptions"
 
+// Deprecated: Use metrics.GRPCMethodKey instead.
+// These constants are maintained for backwards compatibility.
+const GRPCMethodKey = "grpc_method"
+
+// Deprecated: Use metrics.GRPCServiceKey instead.
+// These constants are maintained for backwards compatibility.
+const GRPCServiceKey = "grpc_service"
+
 var (
 	ErrUnsupportedStrategy       = fmt.Errorf("unsupported hotload strategy")
 	ErrMalformedConnectionString = fmt.Errorf("malformed hotload connection string")
