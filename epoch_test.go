@@ -82,8 +82,8 @@ func TestConnectionTracking(t *testing.T) {
 	tracker.unregisterConn(1, conn2)
 
 	stats = tracker.getEpochStats()
-	if count, ok := stats[1]; ok {
-		t.Errorf("expected epoch 1 to be cleaned up, but found %d connections", count)
+	if count, ok := stats[1]; !ok || count != 0 {
+		t.Errorf("expected epoch 1 to have 0 connections, got %d (ok=%v)", count, ok)
 	}
 }
 
