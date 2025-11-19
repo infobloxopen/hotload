@@ -1,0 +1,11 @@
+# Test binaries
+*.test
+*.out
+
+# Temporary test files
+hotload-*.txt
+*.db
+
+# Coverage files
+coverage.out
+coverage.html
