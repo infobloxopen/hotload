@@ -153,7 +153,7 @@ func (s *Strategy) eventLoop() {
 
 func (s *Strategy) handleEvent(event fsnotify.Event) {
 	if !event.Has(fsnotify.Write) && !event.Has(fsnotify.Remove) &&
-	   !event.Has(fsnotify.Create) && !event.Has(fsnotify.Rename) {
+		!event.Has(fsnotify.Create) && !event.Has(fsnotify.Rename) {
 		return
 	}
 
