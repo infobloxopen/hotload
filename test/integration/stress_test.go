@@ -16,7 +16,6 @@ import (
 	pgxv5stdlib "github.com/jackc/pgx/v5/stdlib"
 )
 
-//
 func TestStress_ConcurrentQueriesWithDSNChanges(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping stress test in short mode")
@@ -143,7 +142,6 @@ func TestStress_ConcurrentQueriesWithDSNChanges(t *testing.T) {
 	t.Log("✅ Stress test passed: graceful handling of concurrent queries during DSN changes")
 }
 
-//
 func TestStress_RapidDSNChanges(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping stress test in short mode")
@@ -249,7 +247,6 @@ func TestStress_RapidDSNChanges(t *testing.T) {
 	t.Log("✅ Rapid DSN change test completed")
 }
 
-//
 func TestStress_LongRunningTransactionDuringReload(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping stress test in short mode")
@@ -377,7 +374,6 @@ func TestStress_LongRunningTransactionDuringReload(t *testing.T) {
 	t.Log("✅ Long transaction during reload test passed - hotload handled gracefully")
 }
 
-//
 func TestStress_HighConcurrencyConnectionPool(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping stress test in short mode")
@@ -472,7 +468,6 @@ func TestStress_HighConcurrencyConnectionPool(t *testing.T) {
 	t.Log("✅ High concurrency test passed - no leaks or deadlocks detected")
 }
 
-//
 func TestStress_RaceDetection(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping stress test in short mode")
