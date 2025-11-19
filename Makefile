@@ -27,10 +27,7 @@ test: vet get-ginkgo go-test
 
 go-test:
 	go test -race github.com/infobloxopen/hotload \
-		github.com/infobloxopen/hotload/fsnotify \
-		github.com/infobloxopen/hotload/internal \
-		github.com/infobloxopen/hotload/metrics \
-		github.com/infobloxopen/hotload/modtime
+		github.com/infobloxopen/hotload/fsnotify
 
 
 # test target which includes the no-diff fail condition
