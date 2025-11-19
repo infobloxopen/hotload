@@ -1,6 +1,8 @@
 package observability
 
 import (
+	"strconv"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -45,7 +47,7 @@ func RecordEpochTransition(connection string, newEpoch uint64) {
 }
 
 func RecordConnectionCount(connection string, epoch uint64, count int) {
-	ConnectionsPerEpoch.WithLabelValues(connection, string(rune(epoch))).Set(float64(count))
+	ConnectionsPerEpoch.WithLabelValues(connection, strconv.FormatUint(epoch, 10)).Set(float64(count))
 }
 
 func RecordOldEpochDiscard(connection string) {
