@@ -2,305 +2,252 @@ package hotload
 
 import (
 	"context"
-	"database/sql"
 	"database/sql/driver"
-	"errors"
-	"fmt"
-	"sync"
+	"io"
 	"sync/atomic"
-
-	"github.com/infobloxopen/hotload/logger"
-	"github.com/teivah/onecontext"
 )
 
-// managedConn wraps a sql/driver.Conn so that it can be closed by
-// a supervising context.
-type managedConn struct {
-	ctx       context.Context
-	dsn       string
-	redactDsn string
-	conn      driver.Conn
-	reset     bool
-	killed    bool
-	mu        sync.RWMutex
-
-	// callback function to be called after the connection is closed
-	afterClose func(*managedConn)
-
-	execStmtsCounter  atomic.Int64 // count the number of exec calls in a transaction
-	queryStmtsCounter atomic.Int64 // count the number of query calls in a transaction
+type wrappedConn struct {
+	conn    driver.Conn
+	epoch   Epoch
+	tracker *epochTracker
+	closed  atomic.Bool
 }
 
-// BeginTx calls the underlying BeginTx method unless the supervising context
-// is closed.
-// Returns an error if the underlying driver doesn't implement
-// driver.ConnBeginTx interface and TxOptions are non default. If TxOptions are
-// of default values it will call the underlying Begin method as like sql
-// package.
-// If the context is canceled by the user this method will call Tx.Rollback.
-func (c *managedConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
-	select {
-	case <-c.ctx.Done():
-		c.close()
-		return nil, driver.ErrBadConn
-	default:
+func newWrappedConn(conn driver.Conn, epoch Epoch, tracker *epochTracker) *wrappedConn {
+	wc := &wrappedConn{
+		conn:    conn,
+		epoch:   epoch,
+		tracker: tracker,
 	}
+	tracker.registerConn(epoch, wc)
+	return wc
+}
 
-	if conn, ok := c.conn.(driver.ConnBeginTx); ok {
-		tx, err := conn.BeginTx(ctx, opts)
+// Prepare implements driver.Conn.
+func (wc *wrappedConn) Prepare(query string) (driver.Stmt, error) {
+	stmt, err := wc.conn.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+	return &wrappedStmt{stmt: stmt, conn: wc}, nil
+}
+
+// Close implements driver.Conn.
+func (wc *wrappedConn) Close() error {
+	if wc.closed.Swap(true) {
+		return nil // Already closed
+	}
+	
+	wc.tracker.unregisterConn(wc.epoch, wc)
+	return wc.conn.Close()
+}
+
+// Begin implements driver.Conn.
+func (wc *wrappedConn) Begin() (driver.Tx, error) {
+	tx, err := wc.conn.Begin()
+	if err != nil {
+		return nil, err
+	}
+	return &wrappedTx{tx: tx, conn: wc}, nil
+}
+
+func (wc *wrappedConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
+	if connCtx, ok := wc.conn.(driver.ConnPrepareContext); ok {
+		stmt, err := connCtx.PrepareContext(ctx, query)
 		if err != nil {
 			return nil, err
 		}
-
-		return &managedTx{tx: tx, conn: c, ctx: ctx}, nil
+		return &wrappedStmt{stmt: stmt, conn: wc}, nil
 	}
-
-	// same as is defined in go sql package to call Begin method if the TxOptions are default
-	if sql.IsolationLevel(opts.Isolation) != sql.LevelDefault {
-		return nil, errors.New("hotload: underlying driver does not support non-default isolation level")
-	}
-
-	if opts.ReadOnly {
-		return nil, errors.New("hotload: underlying driver does not support read-only transactions")
-	}
-
-	tx, err := c.conn.Begin()
-	if err == nil {
-		select {
-		default:
-		case <-ctx.Done():
-			tx.Rollback()
-			return nil, ctx.Err()
-		}
-	}
-
-	return tx, err
+	return wc.Prepare(query)
 }
 
-func newManagedConn(ctx context.Context, dsn, redactDsn string, conn driver.Conn, afterClose func(*managedConn)) *managedConn {
-	return &managedConn{
-		ctx:        ctx,
-		dsn:        dsn,
-		redactDsn:  redactDsn,
-		conn:       conn,
-		afterClose: afterClose,
+// BeginTx implements driver.ConnBeginTx.
+func (wc *wrappedConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	if connTx, ok := wc.conn.(driver.ConnBeginTx); ok {
+		tx, err := connTx.BeginTx(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		return &wrappedTx{tx: tx, conn: wc}, nil
 	}
+	return wc.Begin()
 }
 
-func (c *managedConn) Exec(query string, args []driver.Value) (driver.Result, error) {
-	c.logf("managedConn.Exec", "Exec")
-
-	connCtx, ok := c.conn.(driver.ExecerContext)
-	if ok {
-		namedArgs := make([]driver.NamedValue, len(args), len(args))
-		for i := 0; i < len(args); i++ {
-			namedArgs[i].Name = ""
-			namedArgs[i].Ordinal = i
-			namedArgs[i].Value = args[i]
-		}
-		c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
-		c.logf("managedConn.Exec", "calling underlying conn.ExecContext()")
-		return connCtx.ExecContext(c.ctx, query, namedArgs)
+// ExecContext implements driver.ExecerContext.
+func (wc *wrappedConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	if execer, ok := wc.conn.(driver.ExecerContext); ok {
+		return execer.ExecContext(ctx, query, args)
 	}
-
-	connExr, ok := c.conn.(driver.Execer)
-	if ok {
-		c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
-		c.logf("managedConn.Exec", "calling underlying conn.Exec()")
-		return connExr.Exec(query, args)
-	}
-
 	return nil, driver.ErrSkip
 }
 
-func (c *managedConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
-	c.logf("managedConn.ExecContext", "ExecContext")
-	conn, ok := c.conn.(driver.ExecerContext)
-	if !ok {
-		return nil, driver.ErrSkip
-	}
-	c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
-	c.logf("managedConn.ExecContext", "calling underlying conn.ExecContext()")
-	mergedCtx, cancel := onecontext.Merge(c.ctx, ctx)
-	defer cancel()
-	return conn.ExecContext(mergedCtx, query, args)
-}
-
-func (c *managedConn) CheckNamedValue(namedValue *driver.NamedValue) error {
-	conn, ok := c.conn.(driver.NamedValueChecker)
-	if !ok {
-		return driver.ErrSkip
-	}
-	return conn.CheckNamedValue(namedValue)
-}
-
-func (c *managedConn) Query(query string, args []driver.Value) (driver.Rows, error) {
-	c.logf("managedConn.Query", "Query")
-
-	connCtx, ok := c.conn.(driver.QueryerContext)
-	if ok {
-		namedArgs := make([]driver.NamedValue, len(args), len(args))
-		for i := 0; i < len(args); i++ {
-			namedArgs[i].Name = ""
-			namedArgs[i].Ordinal = i
-			namedArgs[i].Value = args[i]
+// QueryContext implements driver.QueryerContext.
+func (wc *wrappedConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	if queryer, ok := wc.conn.(driver.QueryerContext); ok {
+		rows, err := queryer.QueryContext(ctx, query, args)
+		if err != nil {
+			return nil, err
 		}
-		c.incQueryStmtsCounter() //increment the query counter to keep track of the number of query calls
-		c.logf("managedConn.Query", "calling underlying conn.QueryContext()")
-		return connCtx.QueryContext(c.ctx, query, namedArgs)
+		return &wrappedRows{rows: rows, conn: wc}, nil
 	}
-
-	connQyr, ok := c.conn.(driver.Queryer)
-	if ok {
-		namedArgs := make([]driver.NamedValue, len(args), len(args))
-		for i := 0; i < len(args); i++ {
-			namedArgs[i].Name = ""
-			namedArgs[i].Ordinal = i
-			namedArgs[i].Value = args[i]
-		}
-		c.incQueryStmtsCounter() //increment the query counter to keep track of the number of query calls
-		c.logf("managedConn.Query", "calling underlying conn.Query()")
-		return connQyr.Query(query, args)
-	}
-
 	return nil, driver.ErrSkip
 }
 
-func (c *managedConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	c.logf("managedConn.QueryContext", "QueryContext")
-	conn, ok := c.conn.(driver.QueryerContext)
-	if !ok {
-		return nil, driver.ErrSkip
+func (wc *wrappedConn) Ping(ctx context.Context) error {
+	if pinger, ok := wc.conn.(driver.Pinger); ok {
+		return pinger.Ping(ctx)
 	}
-	c.incQueryStmtsCounter() //increment the query counter to keep track of the number of query calls
-	c.logf("managedConn.QueryContext", "calling underlying conn.QueryContext()")
-
-	// TODO
-	// We would like to merge the hotload-context with the query-context here,
-	// and then cancel the merged-context to prevent goroutine-leaks
-	// (similar to ExecContext() above).
-	// However the Rows object returned seems to contain the merged-context.
-	// Canceling the merged-context here invalidates the returned Rows object,
-	// and causes any cursor iteration of the returned Rows objects to fail
-	// with context-canceled error.
-
-	return conn.QueryContext(ctx, query, args)
+	return nil
 }
 
-func (c *managedConn) Prepare(query string) (driver.Stmt, error) {
-	select {
-	case <-c.ctx.Done():
-		c.logf("managedConn.Prepare", "ctx done, calling close()")
-		c.close()
-		return nil, driver.ErrBadConn
-	default:
-	}
-	c.logf("managedConn.Prepare", "calling underlying Prepare()")
-	return c.conn.Prepare(query)
-}
-
-// Begin calls the underlying Begin method unless the supervising
-// context is closed.
-func (c *managedConn) Begin() (driver.Tx, error) {
-	select {
-	case <-c.ctx.Done():
-		c.close()
-		return nil, driver.ErrBadConn
-	default:
-	}
-	return c.conn.Begin()
-}
-
-func (c *managedConn) IsValid() bool {
-	select {
-	case <-c.ctx.Done():
-		c.logf("managedConn.IsValid", "ctx done, calling close()")
-		c.close()
-		return false
-	default:
-	}
-	s, ok := c.conn.(driver.Validator)
-	if !ok {
-		return true
-	}
-	c.logf("managedConn.IsValid", "calling underlying IsValid()")
-	return s.IsValid()
-}
-
-func (c *managedConn) ResetSession(ctx context.Context) error {
-	if c.GetReset() {
-		c.logf("managedConn.ResetSession", "already reset")
+// ResetSession implements driver.SessionResetter.
+func (wc *wrappedConn) ResetSession(ctx context.Context) error {
+	if wc.tracker.isOldEpoch(wc.epoch) {
 		return driver.ErrBadConn
 	}
-
-	s, ok := c.conn.(driver.SessionResetter)
-	if !ok {
-		return nil
+	
+	if resetter, ok := wc.conn.(driver.SessionResetter); ok {
+		return resetter.ResetSession(ctx)
 	}
-
-	c.logf("managedConn.ResetSession", "calling underlying ResetSession()")
-	return s.ResetSession(ctx)
+	return nil
 }
 
-func (c *managedConn) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	err := c.close()
-
-	if err == nil {
-		c.killed = true
+// CheckNamedValue implements driver.NamedValueChecker.
+func (wc *wrappedConn) CheckNamedValue(nv *driver.NamedValue) error {
+	if checker, ok := wc.conn.(driver.NamedValueChecker); ok {
+		return checker.CheckNamedValue(nv)
 	}
-	c.logf("managedConn.Close", "closed")
-
-	return err
+	return driver.ErrSkip
 }
 
-func (c *managedConn) close() error {
-	if c.afterClose != nil {
-		defer c.afterClose(c)
+type wrappedStmt struct {
+	stmt driver.Stmt
+	conn *wrappedConn
+}
+
+func (ws *wrappedStmt) Close() error {
+	return ws.stmt.Close()
+}
+
+func (ws *wrappedStmt) NumInput() int {
+	return ws.stmt.NumInput()
+}
+
+func (ws *wrappedStmt) Exec(args []driver.Value) (driver.Result, error) {
+	return ws.stmt.Exec(args)
+}
+
+func (ws *wrappedStmt) Query(args []driver.Value) (driver.Rows, error) {
+	rows, err := ws.stmt.Query(args)
+	if err != nil {
+		return nil, err
 	}
-	c.logf("managedConn.close", "calling underlying Close()")
-	return c.conn.Close()
+	return &wrappedRows{rows: rows, conn: ws.conn}, nil
 }
 
-func (c *managedConn) GetReset() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	c.logf("managedConn.GetReset", "reset=%v", c.reset)
-	return c.reset
+func (ws *wrappedStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
+	if stmtCtx, ok := ws.stmt.(driver.StmtExecContext); ok {
+		return stmtCtx.ExecContext(ctx, args)
+	}
+	dargs, err := namedValueToValue(args)
+	if err != nil {
+		return nil, err
+	}
+	return ws.Exec(dargs)
 }
 
-func (c *managedConn) Reset(v bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.reset = v
-	c.logf("managedConn.Reset", "reset=%v", v)
+func (ws *wrappedStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
+	if stmtCtx, ok := ws.stmt.(driver.StmtQueryContext); ok {
+		rows, err := stmtCtx.QueryContext(ctx, args)
+		if err != nil {
+			return nil, err
+		}
+		return &wrappedRows{rows: rows, conn: ws.conn}, nil
+	}
+	dargs, err := namedValueToValue(args)
+	if err != nil {
+		return nil, err
+	}
+	return ws.Query(dargs)
 }
 
-func (c *managedConn) GetKill() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	c.logf("managedConn.GetKill", "killed=%v", c.killed)
-	return c.killed
+type wrappedTx struct {
+	tx   driver.Tx
+	conn *wrappedConn
 }
 
-func (c *managedConn) incExecStmtsCounter() {
-	c.execStmtsCounter.Add(1)
+func (wt *wrappedTx) Commit() error {
+	return wt.tx.Commit()
 }
 
-func (c *managedConn) resetExecStmtsCounter() {
-	c.execStmtsCounter.Store(0)
+func (wt *wrappedTx) Rollback() error {
+	return wt.tx.Rollback()
 }
 
-func (c *managedConn) incQueryStmtsCounter() {
-	c.queryStmtsCounter.Add(1)
+type wrappedRows struct {
+	rows driver.Rows
+	conn *wrappedConn
 }
 
-func (c *managedConn) resetQueryStmtsCounter() {
-	c.queryStmtsCounter.Store(0)
+func (wr *wrappedRows) Columns() []string {
+	return wr.rows.Columns()
 }
 
-func (c *managedConn) logf(prefix, format string, args ...any) {
-	logPrefix := fmt.Sprintf("%s[%s]:", prefix, c.redactDsn)
-	logger.Logf(logPrefix, format, args...)
+func (wr *wrappedRows) Close() error {
+	return wr.rows.Close()
+}
+
+func (wr *wrappedRows) Next(dest []driver.Value) error {
+	if wr.conn.tracker.isOldEpoch(wr.conn.epoch) {
+		return io.EOF
+	}
+	return wr.rows.Next(dest)
+}
+
+func (wr *wrappedRows) ColumnTypeScanType(index int) interface{} {
+	if rowsType, ok := wr.rows.(driver.RowsColumnTypeScanType); ok {
+		return rowsType.ColumnTypeScanType(index)
+	}
+	return nil
+}
+
+func (wr *wrappedRows) ColumnTypeDatabaseTypeName(index int) string {
+	if rowsType, ok := wr.rows.(driver.RowsColumnTypeDatabaseTypeName); ok {
+		return rowsType.ColumnTypeDatabaseTypeName(index)
+	}
+	return ""
+}
+
+func (wr *wrappedRows) ColumnTypeLength(index int) (length int64, ok bool) {
+	if rowsType, ok := wr.rows.(driver.RowsColumnTypeLength); ok {
+		return rowsType.ColumnTypeLength(index)
+	}
+	return 0, false
+}
+
+func (wr *wrappedRows) ColumnTypeNullable(index int) (nullable, ok bool) {
+	if rowsType, ok := wr.rows.(driver.RowsColumnTypeNullable); ok {
+		return rowsType.ColumnTypeNullable(index)
+	}
+	return false, false
+}
+
+func (wr *wrappedRows) ColumnTypePrecisionScale(index int) (precision, scale int64, ok bool) {
+	if rowsType, ok := wr.rows.(driver.RowsColumnTypePrecisionScale); ok {
+		return rowsType.ColumnTypePrecisionScale(index)
+	}
+	return 0, 0, false
+}
+
+func namedValueToValue(named []driver.NamedValue) ([]driver.Value, error) {
+	dargs := make([]driver.Value, len(named))
+	for n, param := range named {
+		if len(param.Name) > 0 {
+			return nil, driver.ErrSkip
+		}
+		dargs[n] = param.Value
+	}
+	return dargs, nil
 }
