@@ -38,7 +38,7 @@ func (wc *wrappedConn) Close() error {
 	if wc.closed.Swap(true) {
 		return nil // Already closed
 	}
-	
+
 	wc.tracker.unregisterConn(wc.epoch, wc)
 	return wc.conn.Close()
 }
@@ -107,7 +107,7 @@ func (wc *wrappedConn) ResetSession(ctx context.Context) error {
 	if wc.tracker.isOldEpoch(wc.epoch) {
 		return driver.ErrBadConn
 	}
-	
+
 	if resetter, ok := wc.conn.(driver.SessionResetter); ok {
 		return resetter.ResetSession(ctx)
 	}

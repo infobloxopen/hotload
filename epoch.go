@@ -10,11 +10,11 @@ type Epoch uint64
 type epochTracker struct {
 	mu      sync.RWMutex
 	current atomic.Uint64
-	
+
 	dsn map[Epoch]string
-	
+
 	conns map[Epoch]map[*wrappedConn]struct{}
-	
+
 	logFunc func(format string, args ...interface{})
 }
 
@@ -27,11 +27,11 @@ func newEpochTracker(initialDSN string, logFunc func(format string, args ...inte
 	et.current.Store(1)
 	et.dsn[1] = initialDSN
 	et.conns[1] = make(map[*wrappedConn]struct{})
-	
+
 	if logFunc != nil {
 		logFunc("epoch 1 created with initial DSN")
 	}
-	
+
 	return et
 }
 
@@ -50,26 +50,26 @@ func (et *epochTracker) getCurrentDSN() (string, Epoch) {
 func (et *epochTracker) updateDSN(newDSN string) Epoch {
 	et.mu.Lock()
 	defer et.mu.Unlock()
-	
+
 	oldEpoch := et.getCurrentEpoch()
 	newEpoch := oldEpoch + 1
-	
+
 	et.dsn[newEpoch] = newDSN
 	et.conns[newEpoch] = make(map[*wrappedConn]struct{})
 	et.current.Store(uint64(newEpoch))
-	
+
 	if et.logFunc != nil {
-		et.logFunc("epoch %d -> %d: DSN updated (old epoch has %d connections)", 
+		et.logFunc("epoch %d -> %d: DSN updated (old epoch has %d connections)",
 			oldEpoch, newEpoch, len(et.conns[oldEpoch]))
 	}
-	
+
 	return newEpoch
 }
 
 func (et *epochTracker) registerConn(epoch Epoch, conn *wrappedConn) {
 	et.mu.Lock()
 	defer et.mu.Unlock()
-	
+
 	if conns, ok := et.conns[epoch]; ok {
 		conns[conn] = struct{}{}
 		if et.logFunc != nil {
@@ -81,15 +81,15 @@ func (et *epochTracker) registerConn(epoch Epoch, conn *wrappedConn) {
 func (et *epochTracker) unregisterConn(epoch Epoch, conn *wrappedConn) {
 	et.mu.Lock()
 	defer et.mu.Unlock()
-	
+
 	if conns, ok := et.conns[epoch]; ok {
 		delete(conns, conn)
 		remaining := len(conns)
-		
+
 		if et.logFunc != nil {
 			et.logFunc("epoch %d: unregistered connection (remaining: %d)", epoch, remaining)
 		}
-		
+
 		if remaining == 0 && epoch < et.getCurrentEpoch() {
 			delete(et.conns, epoch)
 			delete(et.dsn, epoch)
@@ -107,7 +107,7 @@ func (et *epochTracker) isOldEpoch(epoch Epoch) bool {
 func (et *epochTracker) getEpochStats() map[Epoch]int {
 	et.mu.RLock()
 	defer et.mu.RUnlock()
-	
+
 	stats := make(map[Epoch]int)
 	for epoch, conns := range et.conns {
 		stats[epoch] = len(conns)

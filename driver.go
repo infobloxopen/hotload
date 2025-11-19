@@ -31,9 +31,9 @@ import (
 
 var (
 	ErrUnsupportedStrategy = fmt.Errorf("unsupported hotload strategy")
-	
+
 	ErrUnknownDriver = fmt.Errorf("target driver is not registered with hotload")
-	
+
 	ErrMalformedConnectionString = fmt.Errorf("malformed hotload connection string")
 )
 
@@ -119,37 +119,37 @@ func (d *hotloadDriver) Open(name string) (driver.Conn, error) {
 func (d *hotloadDriver) OpenConnector(name string) (driver.Connector, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	
+
 	if conn, ok := d.connectors[name]; ok {
 		return conn, nil
 	}
-	
+
 	parsed, err := parseConnectionString(name)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	mu.RLock()
 	strategy, ok := strategies[parsed.strategyName]
 	if !ok {
 		mu.RUnlock()
 		return nil, ErrUnsupportedStrategy
 	}
-	
+
 	targetDriver, ok := sqlDrivers[parsed.driverName]
 	if !ok {
 		mu.RUnlock()
 		return nil, ErrUnknownDriver
 	}
 	mu.RUnlock()
-	
+
 	conn := &connector{
 		name:         name,
 		strategy:     strategy,
 		targetDriver: targetDriver,
 		parsed:       parsed,
 	}
-	
+
 	d.connectors[name] = conn
 	return conn, nil
 }
@@ -166,19 +166,19 @@ func parseConnectionString(dsn string) (*parsedDSN, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrMalformedConnectionString, err)
 	}
-	
+
 	if u.Scheme == "" {
 		return nil, fmt.Errorf("%w: missing strategy (scheme)", ErrMalformedConnectionString)
 	}
-	
+
 	if u.Host == "" {
 		return nil, fmt.Errorf("%w: missing driver (host)", ErrMalformedConnectionString)
 	}
-	
+
 	if u.Path == "" {
 		return nil, fmt.Errorf("%w: missing path", ErrMalformedConnectionString)
 	}
-	
+
 	return &parsedDSN{
 		strategyName: u.Scheme,
 		driverName:   u.Host,
@@ -192,13 +192,13 @@ type connector struct {
 	strategy     Strategy
 	targetDriver driver.Driver
 	parsed       *parsedDSN
-	
+
 	mu      sync.Mutex
 	started bool
 	ctx     context.Context
 	cancel  context.CancelFunc
 	tracker *epochTracker
-	
+
 	logFunc func(format string, args ...interface{})
 }
 
@@ -212,40 +212,40 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if err := c.ensureStarted(ctx); err != nil {
 		return nil, err
 	}
-	
+
 	dsn, epoch := c.tracker.getCurrentDSN()
 	if dsn == "" {
 		return nil, fmt.Errorf("no DSN available")
 	}
-	
+
 	conn, err := c.targetDriver.Open(dsn)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return newWrappedConn(conn, epoch, c.tracker), nil
 }
 
 func (c *connector) ensureStarted(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	if c.started {
 		return nil
 	}
-	
+
 	c.ctx, c.cancel = context.WithCancel(context.Background())
-	
+
 	initialDSN, updates, err := c.strategy.Watch(c.ctx, c.parsed.path, c.parsed.query)
 	if err != nil {
 		c.cancel()
 		return fmt.Errorf("failed to start watching: %w", err)
 	}
-	
+
 	c.tracker = newEpochTracker(initialDSN, c.logFunc)
-	
+
 	go c.watchUpdates(updates)
-	
+
 	c.started = true
 	return nil
 }
@@ -269,11 +269,11 @@ func (c *connector) watchUpdates(updates <-chan string) {
 func (c *connector) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	if c.cancel != nil {
 		c.cancel()
 	}
-	
+
 	return nil
 }
 
