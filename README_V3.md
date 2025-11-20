@@ -63,6 +63,49 @@ func (wc *wrappedConn) ResetSession(ctx context.Context) error {
 
 **No forced closing:** Connections are never forcibly closed from another goroutine, avoiding race conditions and ensuring operations complete naturally.
 
+#### Prepared Statements Across DSN Changes
+
+Prepared statements automatically switch to new connections when the DSN changes:
+
+```go
+stmt, _ := db.Prepare("SELECT * FROM users WHERE id = $1")
+// DSN changes here
+rows, _ := stmt.Query(1)  // Automatically uses new DSN
+```
+
+**How it works:**
+- `wrappedStmt` checks epoch before executing queries
+- Returns `driver.ErrBadConn` if connection is from old epoch (outside transactions)
+- `database/sql` automatically re-prepares statement on new connection
+- No manual intervention needed
+
+#### Transactions Across DSN Changes
+
+Transactions stay on their original connection even when DSN changes:
+
+```go
+tx, _ := db.Begin()
+tx.Exec("INSERT INTO users ...")
+// DSN changes here - transaction continues on old connection
+tx.Exec("INSERT INTO orders ...")
+tx.Commit()  // Completes successfully on old connection
+
+// New queries after commit use new DSN
+db.Query("SELECT * FROM users")
+```
+
+**Why this behavior:**
+- Transactions must complete on the same connection (database requirement)
+- Switching connections mid-transaction would break transaction semantics
+- Old connections are allowed to complete in-flight transactions gracefully
+- After commit/rollback, new operations use the new DSN
+
+**Implementation:**
+- `wrappedConn` tracks transaction state with atomic counter
+- Epoch checks are skipped for all operations within a transaction
+- `wrappedRows.Next()` allows reading results within transactions on old epochs
+- Transaction completes naturally, then connection is discarded via `ResetSession()`
+
 ### 4. FSNotify Edge Case Handling
 
 **File Removal and Re-addition:**

@@ -12,6 +12,7 @@ type wrappedConn struct {
 	epoch   Epoch
 	tracker *epochTracker
 	closed  atomic.Bool
+	inTx    atomic.Int32 // >0 if in transaction
 }
 
 func newWrappedConn(conn driver.Conn, epoch Epoch, tracker *epochTracker) *wrappedConn {
@@ -49,6 +50,7 @@ func (wc *wrappedConn) Begin() (driver.Tx, error) {
 	if err != nil {
 		return nil, err
 	}
+	wc.inTx.Add(1)
 	return &wrappedTx{tx: tx, conn: wc}, nil
 }
 
@@ -70,6 +72,7 @@ func (wc *wrappedConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driv
 		if err != nil {
 			return nil, err
 		}
+		wc.inTx.Add(1)
 		return &wrappedTx{tx: tx, conn: wc}, nil
 	}
 	return wc.Begin()
@@ -136,10 +139,16 @@ func (ws *wrappedStmt) NumInput() int {
 }
 
 func (ws *wrappedStmt) Exec(args []driver.Value) (driver.Result, error) {
+	if ws.conn.inTx.Load() == 0 && ws.conn.tracker.isOldEpoch(ws.conn.epoch) {
+		return nil, driver.ErrBadConn
+	}
 	return ws.stmt.Exec(args)
 }
 
 func (ws *wrappedStmt) Query(args []driver.Value) (driver.Rows, error) {
+	if ws.conn.inTx.Load() == 0 && ws.conn.tracker.isOldEpoch(ws.conn.epoch) {
+		return nil, driver.ErrBadConn
+	}
 	rows, err := ws.stmt.Query(args)
 	if err != nil {
 		return nil, err
@@ -148,6 +157,9 @@ func (ws *wrappedStmt) Query(args []driver.Value) (driver.Rows, error) {
 }
 
 func (ws *wrappedStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
+	if ws.conn.inTx.Load() == 0 && ws.conn.tracker.isOldEpoch(ws.conn.epoch) {
+		return nil, driver.ErrBadConn
+	}
 	if stmtCtx, ok := ws.stmt.(driver.StmtExecContext); ok {
 		return stmtCtx.ExecContext(ctx, args)
 	}
@@ -159,6 +171,9 @@ func (ws *wrappedStmt) ExecContext(ctx context.Context, args []driver.NamedValue
 }
 
 func (ws *wrappedStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
+	if ws.conn.inTx.Load() == 0 && ws.conn.tracker.isOldEpoch(ws.conn.epoch) {
+		return nil, driver.ErrBadConn
+	}
 	if stmtCtx, ok := ws.stmt.(driver.StmtQueryContext); ok {
 		rows, err := stmtCtx.QueryContext(ctx, args)
 		if err != nil {
@@ -179,11 +194,15 @@ type wrappedTx struct {
 }
 
 func (wt *wrappedTx) Commit() error {
-	return wt.tx.Commit()
+	err := wt.tx.Commit()
+	wt.conn.inTx.Add(-1)
+	return err
 }
 
 func (wt *wrappedTx) Rollback() error {
-	return wt.tx.Rollback()
+	err := wt.tx.Rollback()
+	wt.conn.inTx.Add(-1)
+	return err
 }
 
 type wrappedRows struct {
@@ -200,7 +219,7 @@ func (wr *wrappedRows) Close() error {
 }
 
 func (wr *wrappedRows) Next(dest []driver.Value) error {
-	if wr.conn.tracker.isOldEpoch(wr.conn.epoch) {
+	if wr.conn.inTx.Load() == 0 && wr.conn.tracker.isOldEpoch(wr.conn.epoch) {
 		return io.EOF
 	}
 	return wr.rows.Next(dest)
