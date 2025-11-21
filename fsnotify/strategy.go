@@ -190,6 +190,8 @@ func (s *Strategy) checkFileChange(path string) {
 	}
 
 	fw.hash = newHash
+
+	// Copy subscribers under lock to avoid races
 	subscribers := make([]subscriber, len(fw.subscribers))
 	copy(subscribers, fw.subscribers)
 	fw.mu.Unlock()

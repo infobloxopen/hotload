@@ -99,6 +99,11 @@ func (wc *wrappedConn) QueryContext(ctx context.Context, query string, args []dr
 }
 
 func (wc *wrappedConn) Ping(ctx context.Context) error {
+	// Check if connection is from old epoch and mark it for discard
+	if wc.tracker.isOldEpoch(wc.epoch) {
+		return driver.ErrBadConn
+	}
+
 	if pinger, ok := wc.conn.(driver.Pinger); ok {
 		return pinger.Ping(ctx)
 	}
