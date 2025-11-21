@@ -236,13 +236,21 @@ func (c *connector) ensureStarted(ctx context.Context) error {
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 
-	initialDSN, updates, err := c.strategy.Watch(c.ctx, c.parsed.path, c.parsed.query)
+	// Try to use WatchWithOptions if available for backward compatibility
+	var initialDSN string
+	var updates <-chan string
+	var err error
+	if strategyWithOpts, ok := c.strategy.(StrategyWithOptions); ok {
+		initialDSN, updates, err = strategyWithOpts.WatchWithOptions(c.ctx, c.parsed.path, c.parsed.query)
+	} else {
+		initialDSN, updates, err = c.strategy.Watch(c.ctx, c.parsed.path)
+	}
 	if err != nil {
 		c.cancel()
 		return fmt.Errorf("failed to start watching: %w", err)
 	}
 
-	c.tracker = newEpochTracker(initialDSN, c.logFunc)
+	c.tracker = newEpochTracker(initialDSN, c.parsed.query, c.logFunc)
 
 	go c.watchUpdates(updates)
 

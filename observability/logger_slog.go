@@ -1,7 +1,9 @@
+//go:build go1.21
+
 package observability
 
 import (
-	"fmt"
+	"log/slog"
 	"sync"
 )
 
@@ -27,7 +29,7 @@ func Logf(format string, args ...interface{}) {
 	mu.RLock()
 	fn := logFunc
 	mu.RUnlock()
-	
+
 	if fn != nil {
 		fn(format, args...)
 	}
@@ -37,7 +39,7 @@ func ErrLogf(format string, args ...interface{}) {
 	mu.RLock()
 	fn := errLogFunc
 	mu.RUnlock()
-	
+
 	if fn != nil {
 		fn(format, args...)
 	}
@@ -51,6 +53,6 @@ func GetLoggerFunc() func(format string, args ...interface{}) {
 
 func DefaultLogger() func(format string, args ...interface{}) {
 	return func(format string, args ...interface{}) {
-		fmt.Printf(format+"\n", args...)
+		slog.Info(format, args...)
 	}
 }

@@ -48,7 +48,14 @@ func NewStrategy() *Strategy {
 	}
 }
 
-func (s *Strategy) Watch(ctx context.Context, path string, query url.Values) (initial string, updates <-chan string, err error) {
+// Watch implements the Strategy interface for backward compatibility.
+// It calls WatchWithOptions with empty options.
+func (s *Strategy) Watch(ctx context.Context, path string) (initial string, updates <-chan string, err error) {
+	return s.WatchWithOptions(ctx, path, url.Values{})
+}
+
+// WatchWithOptions implements the StrategyWithOptions interface.
+func (s *Strategy) WatchWithOptions(ctx context.Context, path string, query url.Values) (initial string, updates <-chan string, err error) {
 	path = filepath.Clean(path)
 
 	content, hash, err := s.readFile(path)

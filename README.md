@@ -95,6 +95,25 @@ For example:
 db, err := sql.Open("hotload", "fsnotify://postgres/tmp/myconfig.txt?forceKill=true")
 ```
 
+# Grace Period
+
+The grace period feature reduces query failures during DSN changes by allowing old connections to complete in-flight queries before being marked as "old" and discarded. The default grace period is 10 seconds.
+
+You can configure the grace period by adding the `grace_period` query parameter:
+
+```go
+// Default 10s grace period
+db, err := sql.Open("hotload", "fsnotify://postgres/tmp/myconfig.txt")
+
+// Custom 5s grace period
+db, err := sql.Open("hotload", "fsnotify://postgres/tmp/myconfig.txt?grace_period=5s")
+
+// No grace period (immediate draining)
+db, err := sql.Open("hotload", "fsnotify://postgres/tmp/myconfig.txt?grace_period=0")
+```
+
+For detailed information about grace periods, tradeoffs, and choosing the right value for your application, see [GRACE_PERIOD.md](GRACE_PERIOD.md).
+
 # How To Run Integration Tests Locally
 ```
 $ make postgres-docker-compose-up

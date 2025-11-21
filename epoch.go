@@ -1,8 +1,10 @@
 package hotload
 
 import (
+	"net/url"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type Epoch uint64
@@ -15,21 +17,39 @@ type epochTracker struct {
 
 	conns map[Epoch]map[*wrappedConn]struct{}
 
+	// Track when each epoch transitioned (became non-current)
+	transitionTime map[Epoch]time.Time
+
+	// Grace period before marking connections as "old"
+	gracePeriod time.Duration
+
 	logFunc func(format string, args ...interface{})
 }
 
-func newEpochTracker(initialDSN string, logFunc func(format string, args ...interface{})) *epochTracker {
+func newEpochTracker(initialDSN string, query url.Values, logFunc func(format string, args ...interface{})) *epochTracker {
+	// Default grace period
+	gracePeriod := 10 * time.Second
+
+	// Allow override via query parameter: grace_period=200ms
+	if gp := query.Get("grace_period"); gp != "" {
+		if d, err := time.ParseDuration(gp); err == nil && d >= 0 {
+			gracePeriod = d
+		}
+	}
+
 	et := &epochTracker{
-		dsn:     make(map[Epoch]string),
-		conns:   make(map[Epoch]map[*wrappedConn]struct{}),
-		logFunc: logFunc,
+		dsn:            make(map[Epoch]string),
+		conns:          make(map[Epoch]map[*wrappedConn]struct{}),
+		transitionTime: make(map[Epoch]time.Time),
+		gracePeriod:    gracePeriod,
+		logFunc:        logFunc,
 	}
 	et.current.Store(1)
 	et.dsn[1] = initialDSN
 	et.conns[1] = make(map[*wrappedConn]struct{})
 
 	if logFunc != nil {
-		logFunc("epoch 1 created with initial DSN")
+		logFunc("epoch 1 created with initial DSN (grace period: %v)", gracePeriod)
 	}
 
 	return et
@@ -54,13 +74,16 @@ func (et *epochTracker) updateDSN(newDSN string) Epoch {
 	oldEpoch := et.getCurrentEpoch()
 	newEpoch := oldEpoch + 1
 
+	// Record transition time for the old epoch
+	et.transitionTime[oldEpoch] = time.Now()
+
 	et.dsn[newEpoch] = newDSN
 	et.conns[newEpoch] = make(map[*wrappedConn]struct{})
 	et.current.Store(uint64(newEpoch))
 
 	if et.logFunc != nil {
-		et.logFunc("epoch %d -> %d: DSN updated (old epoch has %d connections)",
-			oldEpoch, newEpoch, len(et.conns[oldEpoch]))
+		et.logFunc("epoch %d -> %d: DSN updated (old epoch has %d connections, grace period: %v)",
+			oldEpoch, newEpoch, len(et.conns[oldEpoch]), et.gracePeriod)
 	}
 
 	return newEpoch
@@ -101,7 +124,23 @@ func (et *epochTracker) unregisterConn(epoch Epoch, conn *wrappedConn) {
 }
 
 func (et *epochTracker) isOldEpoch(epoch Epoch) bool {
-	return epoch < et.getCurrentEpoch()
+	current := et.getCurrentEpoch()
+	if epoch >= current {
+		return false
+	}
+
+	// Check if grace period has elapsed since transition
+	et.mu.RLock()
+	transitionTime, exists := et.transitionTime[epoch]
+	et.mu.RUnlock()
+
+	if !exists {
+		// No transition time recorded (shouldn't happen), treat as old
+		return true
+	}
+
+	// Only consider old if grace period has elapsed
+	return time.Since(transitionTime) > et.gracePeriod
 }
 
 func (et *epochTracker) getEpochStats() map[Epoch]int {

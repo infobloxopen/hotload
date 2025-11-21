@@ -23,7 +23,7 @@ func TestFileRemovalAndReAddition(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	initial, updates, err := strategy.Watch(ctx, filePath, url.Values{})
+	initial, updates, err := strategy.WatchWithOptions(ctx, filePath, url.Values{})
 	if err != nil {
 		t.Fatalf("Watch failed: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestAtomicFileReplacement(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	initial, updates, err := strategy.Watch(ctx, filePath, url.Values{})
+	initial, updates, err := strategy.WatchWithOptions(ctx, filePath, url.Values{})
 	if err != nil {
 		t.Fatalf("Watch failed: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestHashBasedChangeDetection(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	initial, updates, err := strategy.Watch(ctx, filePath, url.Values{})
+	initial, updates, err := strategy.WatchWithOptions(ctx, filePath, url.Values{})
 	if err != nil {
 		t.Fatalf("Watch failed: %v", err)
 	}
@@ -163,14 +163,14 @@ func TestMultipleSubscribers(t *testing.T) {
 
 	ctx1, cancel1 := context.WithCancel(ctx)
 	defer cancel1()
-	_, updates1, err := strategy.Watch(ctx1, filePath, url.Values{})
+	_, updates1, err := strategy.WatchWithOptions(ctx1, filePath, url.Values{})
 	if err != nil {
 		t.Fatalf("Watch 1 failed: %v", err)
 	}
 
 	ctx2, cancel2 := context.WithCancel(ctx)
 	defer cancel2()
-	_, updates2, err := strategy.Watch(ctx2, filePath, url.Values{})
+	_, updates2, err := strategy.WatchWithOptions(ctx2, filePath, url.Values{})
 	if err != nil {
 		t.Fatalf("Watch 2 failed: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestContextCancellation(t *testing.T) {
 	strategy := NewStrategy()
 	ctx, cancel := context.WithCancel(context.Background())
 
-	_, updates, err := strategy.Watch(ctx, filePath, url.Values{})
+	_, updates, err := strategy.WatchWithOptions(ctx, filePath, url.Values{})
 	if err != nil {
 		t.Fatalf("Watch failed: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestWhitespaceTrimming(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	initial, _, err := strategy.Watch(ctx, filePath, url.Values{})
+	initial, _, err := strategy.WatchWithOptions(ctx, filePath, url.Values{})
 	if err != nil {
 		t.Fatalf("Watch failed: %v", err)
 	}

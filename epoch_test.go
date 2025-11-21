@@ -1,9 +1,21 @@
 package hotload
 
 import (
+	"net/url"
 	"sync"
 	"testing"
+	"time"
 )
+
+const (
+	defaultGracePeriod = 100 * time.Millisecond
+)
+
+func testGracePeriodQuery() url.Values {
+	q := url.Values{}
+	q.Set("grace_period", defaultGracePeriod.String())
+	return q
+}
 
 func TestEpochTrackerBasic(t *testing.T) {
 	var logMessages []string
@@ -14,7 +26,7 @@ func TestEpochTrackerBasic(t *testing.T) {
 		logMessages = append(logMessages, format)
 	}
 
-	tracker := newEpochTracker("dsn1", logFunc)
+	tracker := newEpochTracker("dsn1", testGracePeriodQuery(), logFunc)
 
 	if epoch := tracker.getCurrentEpoch(); epoch != 1 {
 		t.Errorf("expected initial epoch=1, got %d", epoch)
@@ -30,7 +42,7 @@ func TestEpochTrackerBasic(t *testing.T) {
 }
 
 func TestEpochTransition(t *testing.T) {
-	tracker := newEpochTracker("dsn1", nil)
+	tracker := newEpochTracker("dsn1", testGracePeriodQuery(), nil)
 
 	newEpoch := tracker.updateDSN("dsn2")
 	if newEpoch != 2 {
@@ -49,8 +61,17 @@ func TestEpochTransition(t *testing.T) {
 		t.Errorf("expected epoch=2, got %d", epoch)
 	}
 
+	// During grace period, epoch 1 should NOT be considered old
+	if tracker.isOldEpoch(1) {
+		t.Error("expected epoch 1 to NOT be old during grace period")
+	}
+
+	// Wait for grace period to expire
+	time.Sleep(defaultGracePeriod + 50*time.Millisecond)
+
+	// After grace period, epoch 1 should be old
 	if !tracker.isOldEpoch(1) {
-		t.Error("expected epoch 1 to be old")
+		t.Error("expected epoch 1 to be old after grace period")
 	}
 
 	if tracker.isOldEpoch(2) {
@@ -59,7 +80,7 @@ func TestEpochTransition(t *testing.T) {
 }
 
 func TestConnectionTracking(t *testing.T) {
-	tracker := newEpochTracker("dsn1", nil)
+	tracker := newEpochTracker("dsn1", testGracePeriodQuery(), nil)
 
 	conn1 := &wrappedConn{epoch: 1}
 	conn2 := &wrappedConn{epoch: 1}
@@ -88,7 +109,7 @@ func TestConnectionTracking(t *testing.T) {
 }
 
 func TestEpochCleanup(t *testing.T) {
-	tracker := newEpochTracker("dsn1", nil)
+	tracker := newEpochTracker("dsn1", testGracePeriodQuery(), nil)
 
 	conn1 := &wrappedConn{epoch: 1}
 	conn2 := &wrappedConn{epoch: 1}
@@ -118,7 +139,7 @@ func TestEpochCleanup(t *testing.T) {
 }
 
 func TestConcurrentEpochOperations(t *testing.T) {
-	tracker := newEpochTracker("dsn1", nil)
+	tracker := newEpochTracker("dsn1", testGracePeriodQuery(), nil)
 
 	var wg sync.WaitGroup
 
@@ -158,7 +179,7 @@ func TestConcurrentEpochOperations(t *testing.T) {
 }
 
 func TestMultipleEpochTransitions(t *testing.T) {
-	tracker := newEpochTracker("dsn1", nil)
+	tracker := newEpochTracker("dsn1", testGracePeriodQuery(), nil)
 
 	conns := make(map[Epoch]*wrappedConn)
 
@@ -192,5 +213,71 @@ func TestMultipleEpochTransitions(t *testing.T) {
 	}
 	if count, ok := stats[5]; !ok || count != 1 {
 		t.Errorf("expected 1 connection for epoch 5, got %d", count)
+	}
+}
+
+func TestConfigurableGracePeriod(t *testing.T) {
+	const driverDefaultGracePeriod = 10 * time.Second
+
+	tests := []struct {
+		name           string
+		queryParam     string
+		expectedPeriod time.Duration
+	}{
+		{
+			name:           "default grace period",
+			queryParam:     "",
+			expectedPeriod: driverDefaultGracePeriod,
+		},
+		{
+			name:           "custom grace period 200ms",
+			queryParam:     "grace_period=200ms",
+			expectedPeriod: 200 * time.Millisecond,
+		},
+		{
+			name:           "custom grace period 500ms",
+			queryParam:     "grace_period=500ms",
+			expectedPeriod: 500 * time.Millisecond,
+		},
+		{
+			name:           "zero grace period",
+			queryParam:     "grace_period=0",
+			expectedPeriod: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			query := url.Values{}
+			if tt.queryParam != "" {
+				parts := make(map[string]string)
+				for _, kv := range []string{tt.queryParam} {
+					idx := 0
+					for i, c := range kv {
+						if c == '=' {
+							idx = i
+							break
+						}
+					}
+					if idx > 0 {
+						parts[kv[:idx]] = kv[idx+1:]
+					}
+				}
+				for k, v := range parts {
+					query.Set(k, v)
+				}
+			}
+
+			tracker := newEpochTracker("dsn1", query, nil)
+
+			// Verify tracker was created successfully
+			if tracker == nil {
+				t.Fatal("expected tracker to be created")
+			}
+
+			if tracker.gracePeriod != tt.expectedPeriod {
+				t.Errorf("expected grace period %v, got %v", tt.expectedPeriod, tracker.gracePeriod)
+			}
+		})
 	}
 }

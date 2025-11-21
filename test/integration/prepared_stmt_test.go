@@ -37,7 +37,7 @@ func TestPreparedStatement_AcrossDSNChange(t *testing.T) {
 	}
 	tmpFile.Close()
 
-	hotloadDSN := fmt.Sprintf("fsnotify://%s/%s", driverName, tmpFile.Name())
+	hotloadDSN := fmt.Sprintf("fsnotify://%s/%s?grace_period=1s", driverName, tmpFile.Name())
 	db, err := sql.Open("hotload", hotloadDSN)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
@@ -59,7 +59,7 @@ func TestPreparedStatement_AcrossDSNChange(t *testing.T) {
 	defer cancel()
 
 	var appName string
-	err = stmt.QueryRowContext(ctx, ).Scan(&appName)
+	err = stmt.QueryRowContext(ctx).Scan(&appName)
 	if err != nil {
 		t.Fatalf("Failed to execute prepared statement: %v", err)
 	}
@@ -79,28 +79,28 @@ func TestPreparedStatement_AcrossDSNChange(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	t.Log("🔄 Executing prepared statement after DSN change...")
-	
+
 	var sawNewAppName bool
 	var lastAppName string
 	for i := 0; i < 10; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		
+
 		err = stmt.QueryRowContext(ctx).Scan(&appName)
 		cancel()
-		
+
 		if err != nil {
 			t.Logf("   Attempt %d: Query failed: %v", i+1, err)
 			continue
 		}
-		
+
 		lastAppName = appName
 		t.Logf("   Attempt %d: application_name=%q", i+1, appName)
-		
+
 		if appName == "app_new" {
 			sawNewAppName = true
 			break
 		}
-		
+
 		time.Sleep(200 * time.Millisecond)
 	}
 
@@ -151,7 +151,7 @@ func TestTransaction_MultiStatementAcrossDSNChange(t *testing.T) {
 	}
 	tmpFile.Close()
 
-	hotloadDSN := fmt.Sprintf("fsnotify://%s/%s", driverName, tmpFile.Name())
+	hotloadDSN := fmt.Sprintf("fsnotify://%s/%s?grace_period=1s", driverName, tmpFile.Name())
 	db, err := sql.Open("hotload", hotloadDSN)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)

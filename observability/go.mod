@@ -2,6 +2,8 @@ module github.com/infobloxopen/hotload/observability
 
 go 1.23.0
 
+toolchain go1.24.6
+
 require github.com/prometheus/client_golang v1.20.0
 
 require (
