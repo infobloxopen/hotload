@@ -23,10 +23,13 @@ type epochTracker struct {
 	// Grace period before marking connections as "old"
 	gracePeriod time.Duration
 
+	// Connection name for metrics
+	connectionName string
+
 	logFunc func(format string, args ...interface{})
 }
 
-func newEpochTracker(initialDSN string, query url.Values, logFunc func(format string, args ...interface{})) *epochTracker {
+func newEpochTracker(initialDSN string, query url.Values, connectionName string, logFunc func(format string, args ...interface{})) *epochTracker {
 	// Default grace period
 	gracePeriod := 10 * time.Second
 
@@ -42,6 +45,7 @@ func newEpochTracker(initialDSN string, query url.Values, logFunc func(format st
 		conns:          make(map[Epoch]map[*wrappedConn]struct{}),
 		transitionTime: make(map[Epoch]time.Time),
 		gracePeriod:    gracePeriod,
+		connectionName: connectionName,
 		logFunc:        logFunc,
 	}
 	et.current.Store(1)
@@ -95,8 +99,14 @@ func (et *epochTracker) registerConn(epoch Epoch, conn *wrappedConn) {
 
 	if conns, ok := et.conns[epoch]; ok {
 		conns[conn] = struct{}{}
+		count := len(conns)
 		if et.logFunc != nil {
-			et.logFunc("epoch %d: registered connection (total: %d)", epoch, len(conns))
+			et.logFunc("epoch %d: registered connection (total: %d)", epoch, count)
+		}
+
+		// KPI: Track old epoch connection backlog
+		if epoch < et.getCurrentEpoch() {
+			GetMetricsRecorder().RecordOldEpochConnectionCount(et.connectionName, uint64(epoch), count)
 		}
 	}
 }
@@ -113,9 +123,21 @@ func (et *epochTracker) unregisterConn(epoch Epoch, conn *wrappedConn) {
 			et.logFunc("epoch %d: unregistered connection (remaining: %d)", epoch, remaining)
 		}
 
+		// KPI: Track old epoch connection backlog
+		if epoch < et.getCurrentEpoch() {
+			GetMetricsRecorder().RecordOldEpochConnectionCount(et.connectionName, uint64(epoch), remaining)
+		}
+
 		if remaining == 0 && epoch < et.getCurrentEpoch() {
+			// KPI: Record epoch drain time
+			if transitionTime, exists := et.transitionTime[epoch]; exists {
+				drainDuration := time.Since(transitionTime)
+				GetMetricsRecorder().RecordEpochDrainTime(et.connectionName, uint64(epoch), drainDuration)
+			}
+
 			delete(et.conns, epoch)
 			delete(et.dsn, epoch)
+			delete(et.transitionTime, epoch)
 			if et.logFunc != nil {
 				et.logFunc("epoch %d: fully drained and cleaned up", epoch)
 			}

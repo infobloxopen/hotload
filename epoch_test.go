@@ -26,7 +26,7 @@ func TestEpochTrackerBasic(t *testing.T) {
 		logMessages = append(logMessages, format)
 	}
 
-	tracker := newEpochTracker("dsn1", testGracePeriodQuery(), logFunc)
+	tracker := newEpochTracker("dsn1", testGracePeriodQuery(), "test-conn", logFunc)
 
 	if epoch := tracker.getCurrentEpoch(); epoch != 1 {
 		t.Errorf("expected initial epoch=1, got %d", epoch)
@@ -42,7 +42,7 @@ func TestEpochTrackerBasic(t *testing.T) {
 }
 
 func TestEpochTransition(t *testing.T) {
-	tracker := newEpochTracker("dsn1", testGracePeriodQuery(), nil)
+	tracker := newEpochTracker("dsn1", testGracePeriodQuery(), "test-conn", nil)
 
 	newEpoch := tracker.updateDSN("dsn2")
 	if newEpoch != 2 {
@@ -80,7 +80,7 @@ func TestEpochTransition(t *testing.T) {
 }
 
 func TestConnectionTracking(t *testing.T) {
-	tracker := newEpochTracker("dsn1", testGracePeriodQuery(), nil)
+	tracker := newEpochTracker("dsn1", testGracePeriodQuery(), "test-conn", nil)
 
 	conn1 := &wrappedConn{epoch: 1}
 	conn2 := &wrappedConn{epoch: 1}
@@ -109,7 +109,7 @@ func TestConnectionTracking(t *testing.T) {
 }
 
 func TestEpochCleanup(t *testing.T) {
-	tracker := newEpochTracker("dsn1", testGracePeriodQuery(), nil)
+	tracker := newEpochTracker("dsn1", testGracePeriodQuery(), "test-conn", nil)
 
 	conn1 := &wrappedConn{epoch: 1}
 	conn2 := &wrappedConn{epoch: 1}
@@ -139,7 +139,7 @@ func TestEpochCleanup(t *testing.T) {
 }
 
 func TestConcurrentEpochOperations(t *testing.T) {
-	tracker := newEpochTracker("dsn1", testGracePeriodQuery(), nil)
+	tracker := newEpochTracker("dsn1", testGracePeriodQuery(), "test-conn", nil)
 
 	var wg sync.WaitGroup
 
@@ -179,7 +179,7 @@ func TestConcurrentEpochOperations(t *testing.T) {
 }
 
 func TestMultipleEpochTransitions(t *testing.T) {
-	tracker := newEpochTracker("dsn1", testGracePeriodQuery(), nil)
+	tracker := newEpochTracker("dsn1", testGracePeriodQuery(), "test-conn", nil)
 
 	conns := make(map[Epoch]*wrappedConn)
 
@@ -268,7 +268,7 @@ func TestConfigurableGracePeriod(t *testing.T) {
 				}
 			}
 
-			tracker := newEpochTracker("dsn1", query, nil)
+			tracker := newEpochTracker("dsn1", query, "test-conn", nil)
 
 			// Verify tracker was created successfully
 			if tracker == nil {

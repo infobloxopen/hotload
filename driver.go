@@ -250,7 +250,7 @@ func (c *connector) ensureStarted(ctx context.Context) error {
 		return fmt.Errorf("failed to start watching: %w", err)
 	}
 
-	c.tracker = newEpochTracker(initialDSN, c.parsed.query, c.logFunc)
+	c.tracker = newEpochTracker(initialDSN, c.parsed.query, c.name, c.logFunc)
 
 	go c.watchUpdates(updates)
 
