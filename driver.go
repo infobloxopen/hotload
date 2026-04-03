@@ -53,6 +53,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -95,9 +96,12 @@ type driverInstance struct {
 
 type driverOption func(*driverInstance)
 
-// WithDriverOptions allows you to specify query parameters to the underlying driver.
-// The underlying driver must support URL style connection strings. The given options
-// are appended to the connection string when a connection is opened.
+// WithDriverOptions allows you to specify extra parameters for the underlying
+// driver. The given options are merged into the connection string when a
+// connection is opened. For URL-format DSNs (e.g. postgres://host/db) the
+// options are appended as query parameters. For key=value-format DSNs (e.g.
+// "host=localhost dbname=mydb") the options are appended as key=value pairs
+// with proper quoting per PostgreSQL libpq conventions.
 func WithDriverOptions(options map[string]string) driverOption {
 	return func(d *driverInstance) {
 		if d.options == nil {
@@ -375,18 +379,35 @@ func mergeConnStringOptions(dsn string, options map[string]string) (string, erro
 		return dsn, nil
 	}
 	u, err := url.ParseRequestURI(dsn)
-	if err != nil {
-		return "", fmt.Errorf("unable to parse connection string when specifying extra driver options: %v", err)
+	if err == nil {
+		// URI format (e.g. postgres://user:pass@host:5432/db?sslmode=disable)
+		values, err := url.ParseQuery(u.RawQuery)
+		if err != nil {
+			return "", fmt.Errorf("unable to parse query options in connection string when specifying extra driver options: %v", err)
+		}
+		for k, v := range options {
+			values.Set(k, v)
+		}
+		u.RawQuery = values.Encode()
+		return u.String(), nil
 	}
-	values, err := url.ParseQuery(u.RawQuery)
-	if err != nil {
-		return "", fmt.Errorf("unable to parse query options in connection string when specifying extra driver options: %v", err)
-	}
+	// Key=value format (e.g. "host=localhost port=5432 user=u password=p dbname=db sslmode=disable")
 	for k, v := range options {
-		values.Set(k, v)
+		dsn += " " + k + "=" + quoteConnStringValue(v)
 	}
-	u.RawQuery = values.Encode()
-	return u.String(), nil
+	return dsn, nil
+}
+
+// quoteConnStringValue quotes a value for use in a PostgreSQL key=value
+// connection string if it is empty or contains characters that require quoting
+// (spaces, single quotes, or backslashes), per libpq conventions.
+func quoteConnStringValue(v string) string {
+	if v == "" || strings.ContainsAny(v, " '\\\n") {
+		v = strings.ReplaceAll(v, "\\", "\\\\")
+		v = strings.ReplaceAll(v, "'", "\\'")
+		return "'" + v + "'"
+	}
+	return v
 }
 
 func (cg *chanGroup) Open() (driver.Conn, error) {

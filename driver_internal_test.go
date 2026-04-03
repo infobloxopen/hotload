@@ -90,13 +90,13 @@ func Test_mergeConnStringOptions(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "bad dsn with options",
+			name: "key=value dsn with options",
 			args: args{
-				dsn:     "bad dsn",
-				options: map[string]string{"a": "b"},
+				dsn:     "host=localhost port=5432 dbname=mydb sslmode=disable",
+				options: map[string]string{"application_name": "my-app"},
 			},
-			want:    "",
-			wantErr: true,
+			want:    "host=localhost port=5432 dbname=mydb sslmode=disable application_name=my-app",
+			wantErr: false,
 		},
 		{
 			name: "good dsn with no options",
@@ -115,6 +115,27 @@ func Test_mergeConnStringOptions(t *testing.T) {
 			want:    "postgres://localhost:5432/postgres?disable_cache=true&sslmode=disable",
 			wantErr: false,
 		},
+		{
+			// Reproduces the CrashLoopBackOff observed in dns-config-svc pods.
+			// db-controller provides DSN in key=value format and the password
+			// contains URI-special characters (&, <) that break url.ParseRequestURI.
+			name: "key=value dsn with special chars in password",
+			args: args{
+				dsn:     `host=mydb.cluster.rds.amazonaws.com port=5432 user=nstar_user password=Fhl&kB<U4eY87z. dbname=mydb sslmode=require`,
+				options: map[string]string{"application_name": "dns-config-svc"},
+			},
+			want:    `host=mydb.cluster.rds.amazonaws.com port=5432 user=nstar_user password=Fhl&kB<U4eY87z. dbname=mydb sslmode=require application_name=dns-config-svc`,
+			wantErr: false,
+		},
+		{
+			name: "key=value dsn option value with spaces is quoted",
+			args: args{
+				dsn:     "host=localhost dbname=testdb",
+				options: map[string]string{"application_name": "my service"},
+			},
+			want:    "host=localhost dbname=testdb application_name='my service'",
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -125,6 +146,29 @@ func Test_mergeConnStringOptions(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("mergeConnStringOptions() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func Test_quoteConnStringValue(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"simple", "simple"},
+		{"dns-config-svc", "dns-config-svc"},
+		{"has space", "'has space'"},
+		{"", "''"},
+		{"has'quote", `'has\'quote'`},
+		{`has\backslash`, `'has\\backslash'`},
+		{"Fhl&kB<U4eY87z.", "Fhl&kB<U4eY87z."}, // URI-special chars don't need quoting in key=value
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := quoteConnStringValue(tt.input)
+			if got != tt.want {
+				t.Errorf("quoteConnStringValue(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
 	}
