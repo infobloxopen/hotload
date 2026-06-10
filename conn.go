@@ -25,7 +25,6 @@ type baseConn struct {
 	dsn        string
 	redactDsn  string
 	closed     atomic.Bool
-	killed     atomic.Bool
 	execStmts  atomic.Int64 // exec statements since the last completed transaction
 	queryStmts atomic.Int64 // query statements since the last completed transaction
 }
@@ -163,13 +162,12 @@ func (c *baseConn) Close() error {
 }
 
 // closeConn closes the underlying conn exactly once, no matter how many
-// paths race to close it (the pool, a generation kill, or both).
+// paths race to close it (the pool, a generation kill, or both). killed
+// records in the emitted hook event whether the close was caused by a
+// config change rather than the pool retiring the conn.
 func (c *baseConn) closeConn(killed bool) error {
 	if !c.closed.CompareAndSwap(false, true) {
 		return nil
-	}
-	if killed {
-		c.killed.Store(true)
 	}
 	err := c.inner.Close()
 	c.gen.remove(c)

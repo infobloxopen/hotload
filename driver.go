@@ -296,7 +296,12 @@ func (h *hdriver) getGroup(name string, pin bool) (*group, error) {
 }
 
 // releaseGroup drops one connector reference and shuts the group down when
-// no references remain (unless a legacy Open pinned it).
+// no references remain (unless a legacy Open pinned it). The strategy watch
+// is closed while h.mu is still held: getGroup establishes watches under
+// the same lock, so a dying group's watch is fully closed before a new
+// group with the same DSN can watch the same path — otherwise the strategy
+// could hand the new group the doomed update channel and the new group
+// would silently stop receiving config changes.
 func (h *hdriver) releaseGroup(name string) {
 	h.mu.Lock()
 	g, ok := h.groups[name]
@@ -306,12 +311,13 @@ func (h *hdriver) releaseGroup(name string) {
 			g = nil
 		} else {
 			delete(h.groups, name)
+			g.closeWatch()
 		}
 	}
 	h.mu.Unlock()
 
 	if g != nil {
-		g.shutdown()
+		g.finishShutdown()
 	}
 }
 

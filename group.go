@@ -227,6 +227,11 @@ func (g *group) conn(ctx context.Context) (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+	redactDsn := gen.redactDsn
+	if dsn != gen.dsn {
+		// Driver options changed the DSN; redact the actual dial string.
+		redactDsn = internal.RedactUrl(dsn)
+	}
 	inner, err := g.dial(ctx, gen, dsn)
 	if err != nil {
 		return nil, err
@@ -237,7 +242,7 @@ func (g *group) conn(ctx context.Context) (driver.Conn, error) {
 		gen:       gen,
 		group:     g,
 		dsn:       dsn,
-		redactDsn: internal.RedactUrl(dsn),
+		redactDsn: redactDsn,
 	}
 	gen.add(c)
 	emitConnOpen(ConnEvent{GroupName: g.name, RedactedDSN: c.redactDsn})
@@ -263,11 +268,12 @@ func (g *group) dial(ctx context.Context, gen *generation, dsn string) (driver.C
 	return gen.connector.Connect(ctx)
 }
 
-// shutdown tears the group down: the strategy watch is closed and the
-// parent context canceled, which terminates runLoop and cancels every
-// generation context. Called once the last connector referencing the group
-// closes.
-func (g *group) shutdown() {
+// closeWatch marks the group closed and stops its strategy watch. It is
+// called by hdriver.releaseGroup with hdriver.mu held, which serializes it
+// against getGroup's strategy.Watch calls (see releaseGroup). Strategy
+// implementations must therefore never call back into hotload from
+// CloseWatch.
+func (g *group) closeWatch() {
 	g.mu.Lock()
 	if g.closed {
 		g.mu.Unlock()
@@ -277,11 +283,17 @@ func (g *group) shutdown() {
 	g.mu.Unlock()
 
 	if err := g.strategy.CloseWatch(g.path, g.pathQry); err != nil {
-		g.logf("group.shutdown", "CloseWatch error: %v", err)
+		g.logf("group.closeWatch", "CloseWatch error: %v", err)
 	}
+}
+
+// finishShutdown completes the teardown started by closeWatch: the parent
+// context cancel terminates runLoop and cancels every generation context.
+// Runs outside all locks so hook callbacks cannot deadlock.
+func (g *group) finishShutdown() {
 	g.parentCancel()
 	EmitWatchEvent(WatchEvent{GroupName: g.name, Strategy: g.strategyName, Path: g.path, Closed: true})
-	g.logf("group.shutdown", "group closed")
+	g.logf("group.finishShutdown", "group closed")
 }
 
 func mergeConnStringOptions(dsn string, options map[string]string) (string, error) {
