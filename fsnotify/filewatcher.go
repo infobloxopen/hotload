@@ -20,37 +20,44 @@ func init() {
 	hotload.RegisterStrategy("fsnotify", NewStrategy())
 }
 
-var resyncPeriod = time.Second * 2
+const defaultResyncPeriod = time.Second * 2
 
 // NewStrategy implements a hotload strategy that monitors config changes
 // in a file using fsnotify.
 func NewStrategy() *Strategy {
 	return &Strategy{
-		paths: make(map[string]*pathWatch),
+		paths:        make(map[string]*pathWatch),
+		resyncPeriod: defaultResyncPeriod,
 	}
 }
 
-// Strategy implements the hotload Strategy inferface by using
+// Strategy implements the hotload Strategy interface by using
 // fsnotify under the covers.
 type Strategy struct {
-	mu      sync.RWMutex
-	paths   map[string]*pathWatch
-	watcher watcher
+	mu           sync.RWMutex
+	paths        map[string]*pathWatch
+	watcher      watcher
+	resyncPeriod time.Duration
 }
 
-type pendingOperation struct {
-	operation string
-	watchPath string
-	pathQuery string
+// update is one value change queued for delivery to a watcher.
+type update struct {
 	dsn       string
 	redactDsn string
 }
 
+// queryWatch fans one path's updates out to one subscriber (the hotload
+// group watching pth+pathQry). Its opLoop goroutine is the only writer of
+// updateChan: it forwards queued updates and closes the channel when
+// operChan closes, so channel operations never race. done is closed (under
+// the strategy lock) when the watch is closed, unblocking an opLoop stuck
+// sending to a subscriber that stopped receiving.
 type queryWatch struct {
 	parentPathW *pathWatch
 	pathQuery   string
 	updateChan  chan string
-	operChan    chan pendingOperation
+	operChan    chan update
+	done        chan struct{}
 }
 
 type pathWatch struct {
@@ -82,11 +89,11 @@ func (s *Strategy) resync(w watcher, pth string) (string, error) {
 	return string(bs), w.Add(pth)
 }
 
-func (s *Strategy) runLoop() {
+func (s *Strategy) runLoop(w watcher) {
 	failedPaths := make(map[string]struct{})
 	for {
 		select {
-		case ev, ok := <-s.watcher.GetEvents():
+		case ev, ok := <-w.GetEvents():
 			if !ok {
 				s.logf("fsnotify.runLoop", "Events chan closed, terminating")
 				return
@@ -97,27 +104,28 @@ func (s *Strategy) runLoop() {
 				continue
 			}
 
-			val, err := s.resync(s.watcher, ev.Name)
-			if err != nil {
-				s.errlogf("fsnotify.runLoop", "resync(%s) err: %v", ev.Name, err)
-				failedPaths[ev.Name] = struct{}{}
-				break
+			for _, pth := range s.affectedPaths(ev.Name) {
+				val, err := s.resync(w, pth)
+				if err != nil {
+					s.errlogf("fsnotify.runLoop", "resync(%s) err: %v", pth, err)
+					failedPaths[pth] = struct{}{}
+					continue
+				}
+				delete(failedPaths, pth)
+				s.setVal(pth, val)
 			}
 
-			s.setVal(ev.Name, val)
-
-		case err, ok := <-s.watcher.GetErrors():
+		case err, ok := <-w.GetErrors():
 			if !ok {
 				s.logf("fsnotify.runLoop", "Errors chan closed, terminating")
 				return
 			}
 			s.logf("fsnotify.runLoop", "got error: %s", err.Error())
 
-		case <-time.After(resyncPeriod):
-			s.logf("fsnotify.runLoop", "resyncPeriod %s timedout", resyncPeriod.String())
+		case <-time.After(s.resyncPeriod):
 			var fixedPaths []string
 			for pth := range failedPaths {
-				val, err := s.resync(s.watcher, pth)
+				val, err := s.resync(w, pth)
 				if err != nil {
 					s.errlogf("fsnotify.runLoop", "resync(%s) err: %v", pth, err)
 				} else {
@@ -132,22 +140,61 @@ func (s *Strategy) runLoop() {
 	}
 }
 
+// affectedPaths maps a notification name to the watched paths that need a
+// resync. The name usually is a watched path, but when the watched path is
+// a symlink (the Kubernetes ConfigMap pattern) some platforms report events
+// under the resolved target — kqueue even adds a /private prefix on macOS —
+// so an unknown name conservatively resyncs every watched path. Events are
+// rare and the watched files are small, so the cost is negligible.
+func (s *Strategy) affectedPaths(name string) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.paths[name]; ok {
+		return []string{name}
+	}
+	out := make([]string, 0, len(s.paths))
+	for pth := range s.paths {
+		out = append(out, pth)
+	}
+	return out
+}
+
 func (s *Strategy) setVal(pth string, val string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.paths[pth]; !ok {
+	pathW, ok := s.paths[pth]
+	if !ok {
 		s.logf("fsnotify.setVal", "ignoring path not in map: '%s'", pth)
 		return
 	}
-	s.paths[pth].value = val
+	pathW.value = val
 	redactDsn := internal.RedactUrl(val)
-	for _, qryW := range s.paths[pth].queries {
-		pendOp := pendingOperation{
-			operation: "send",
-			dsn:       val,
-			redactDsn: redactDsn,
+	for _, qryW := range pathW.queries {
+		qryW.enqueue(update{dsn: val, redactDsn: redactDsn})
+	}
+}
+
+// enqueue queues an update for delivery without ever blocking: only the
+// latest value matters to a hotload group, so when a subscriber's queue is
+// full (it stopped receiving, or is slow), the oldest queued value is
+// dropped to make room. A blocking send here would wedge the whole strategy
+// behind one slow subscriber, since enqueue runs under the strategy lock.
+func (qw *queryWatch) enqueue(up update) {
+	for {
+		select {
+		case qw.operChan <- up:
+			return
+		case <-qw.done:
+			return
+		default:
 		}
-		qryW.operChan <- pendOp
+		// Queue full: drop the oldest queued update and retry. opLoop may
+		// have consumed one concurrently, so the drain is non-blocking too.
+		select {
+		case <-qw.operChan:
+			qw.logf("fsnotify.enqueue", "subscriber slow; dropped oldest queued update")
+		default:
+		}
 	}
 }
 
@@ -157,6 +204,10 @@ func (s *Strategy) Watch(ctx context.Context, pth string, pathQry string) (value
 	pathQry = strings.TrimSpace(pathQry)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Re-initialize after Close (which nils the maps out).
+	if s.paths == nil {
+		s.paths = make(map[string]*pathWatch)
+	}
 	// if this is the first time this strategy is called, initialize ourselves
 	if s.watcher == nil {
 		watcher, err := notifyConstructor()
@@ -164,7 +215,7 @@ func (s *Strategy) Watch(ctx context.Context, pth string, pathQry string) (value
 			return "", nil, err
 		}
 		s.watcher = watcher
-		go s.runLoop()
+		go s.runLoop(watcher)
 	}
 	pathW, found := s.paths[pth]
 	if found {
@@ -197,7 +248,8 @@ func (s *Strategy) Watch(ctx context.Context, pth string, pathQry string) (value
 			parentPathW: pathW,
 			pathQuery:   pathQry,
 			updateChan:  make(chan string),
-			operChan:    make(chan pendingOperation, 30),
+			operChan:    make(chan update, 30),
+			done:        make(chan struct{}),
 		}
 		pathW.queries[pathQry] = qryW
 		go qryW.opLoop()
@@ -207,53 +259,36 @@ func (s *Strategy) Watch(ctx context.Context, pth string, pathQry string) (value
 }
 
 // CloseWatch implements the hotload.Strategy interface.
-// Closes the specified watch by removing the path
-// from the watcher and closing the path's update channel.
+// Closes the specified watch; its update channel is closed (asynchronously,
+// by the watch's delivery goroutine) and, if this was the last watch on the
+// path, the path is removed from the file watcher.
 func (s *Strategy) CloseWatch(pth string, pathQry string) error {
 	pth = path.Clean(pth)
 	pathQry = strings.TrimSpace(pathQry)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	pathW, found := s.paths[pth]
-	if found {
-		qryW, ok := pathW.queries[pathQry]
-		if ok {
-			pendOp := pendingOperation{
-				operation: "close",
-				watchPath: pth,
-				pathQuery: pathQry,
-			}
-			qryW.operChan <- pendOp
-			qryW.logf("fsnotify.CloseWatch", "sent pending close operation")
+	if !found {
+		return nil
+	}
+	qryW, found := pathW.queries[pathQry]
+	if !found {
+		return nil
+	}
+
+	delete(pathW.queries, pathQry)
+	qryW.shutdown()
+	qryW.logf("fsnotify.CloseWatch", "closed watch")
+
+	if len(pathW.queries) == 0 {
+		delete(s.paths, pth)
+		if err := s.watcher.Remove(pth); err != nil {
+			s.errlogf("fsnotify.CloseWatch", "failed to remove '%s' from watcher, err=%v", pth, err)
+			return err
 		}
+		s.logf("fsnotify.CloseWatch", "removed path from being watched '%s'", pth)
 	}
 	return nil
-}
-
-func (s *Strategy) processWatchClosure(pendOp pendingOperation) error {
-	var err error
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	pathW, found := s.paths[pendOp.watchPath]
-	if found {
-		qryW, ok := pathW.queries[pendOp.pathQuery]
-		if ok {
-			delete(pathW.queries, pendOp.pathQuery)
-			qryW.closeUpdateChan()
-			qryW.logf("fsnotify.processWatchClosure", "closed update channel")
-		}
-		if len(pathW.queries) <= 0 {
-			err = s.watcher.Remove(pendOp.watchPath)
-			if err == nil {
-				s.logf("fsnotify.processWatchClosure", "removed path from being watched '%s'", pendOp.watchPath)
-			} else {
-				s.errlogf("fsnotify.processWatchClosure", "failed to remove '%s' from watcher, err=%v", pendOp.watchPath, err)
-			}
-			delete(s.paths, pendOp.watchPath)
-			s.logf("fsnotify.processWatchClosure", "strategy removed path '%s'", pendOp.watchPath)
-		}
-	}
-	return err
 }
 
 // Close implements the hotload.Strategy interface.
@@ -269,60 +304,38 @@ func (s *Strategy) Close() {
 	}
 	for _, pathW := range s.paths {
 		for _, qryW := range pathW.queries {
-			qryW.closeUpdateChan()
-			qryW.logf("fsnotify.Close", "closed update channel")
+			qryW.shutdown()
+			qryW.logf("fsnotify.Close", "closed watch")
 		}
 		pathW.queries = nil
 	}
 	s.paths = nil
 }
 
-func (qw *queryWatch) sendUpdate(val, redactDsn string) {
-	if qw.updateChan == nil {
-		return
-	}
-
-	defer func() {
-		// Recover/ignore from "panic: send on closed channel"
-		r := recover()
-		if r != nil {
-			qw.logf("fsnotify.sendUpdate", "panic recovery '%s'", r)
-		}
-	}()
-
-	qw.logf("fsnotify.sendUpdate", "block-sending redactDsn='%s'", redactDsn)
-	qw.updateChan <- val
-	qw.logf("fsnotify.sendUpdate", "successfully sent redactDsn='%s'", redactDsn)
+// shutdown stops the watch's delivery goroutine. Callers must hold the
+// strategy lock (it is the lock that serializes shutdown with setVal's
+// sends, making the channel close safe).
+func (qw *queryWatch) shutdown() {
+	close(qw.done)
+	close(qw.operChan)
 }
 
-func (qw *queryWatch) closeUpdateChan() {
-	close(qw.updateChan)
-	qw.updateChan = nil
-}
-
+// opLoop forwards queued updates to the subscriber. It is the only
+// goroutine that sends on or closes updateChan. The done channel unblocks
+// the forwarding send if the subscriber stopped receiving (e.g. the hotload
+// group was torn down before the watch was closed).
 func (qw *queryWatch) opLoop() {
-	for {
+	for op := range qw.operChan {
+		qw.logf("fsnotify.opLoop", "sending redactDsn='%s'", op.redactDsn)
 		select {
-		case pendOp, ok := <-qw.operChan:
-			if !ok {
-				qw.logf("fsnotify.opLoop", "operChan closed, terminating")
-				return
-			}
-			switch pendOp.operation {
-			case "close":
-				qw.logf("fsnotify.opLoop", "pendingOperation '%s', pendingPath=%s, pendingQuery='%s'",
-					pendOp.operation, pendOp.watchPath, pendOp.pathQuery)
-				qw.parentPathW.parentStrat.processWatchClosure(pendOp)
-			case "send":
-				qw.logf("fsnotify.opLoop", "pendingOperation '%s', redactDsn='%s'",
-					pendOp.operation, pendOp.redactDsn)
-				qw.sendUpdate(pendOp.dsn, pendOp.redactDsn)
-			default:
-				qw.logf("fsnotify.opLoop", "ignore invalid pendingOperation '%s'",
-					pendOp.operation)
-			}
+		case qw.updateChan <- op.dsn:
+			qw.logf("fsnotify.opLoop", "successfully sent redactDsn='%s'", op.redactDsn)
+		case <-qw.done:
+			qw.logf("fsnotify.opLoop", "watch closed while sending redactDsn='%s'", op.redactDsn)
 		}
 	}
+	close(qw.updateChan)
+	qw.logf("fsnotify.opLoop", "operChan closed, terminating")
 }
 
 func (s *Strategy) logf(prefix, format string, args ...any) {
@@ -342,15 +355,5 @@ func (qw *queryWatch) logf(prefix, format string, args ...any) {
 
 func (s *Strategy) errlogf(prefix, format string, args ...any) {
 	logPrefix := fmt.Sprintf("%s:", prefix)
-	logger.ErrLogf(logPrefix, format, args...)
-}
-
-func (pw *pathWatch) errlogf(prefix, format string, args ...any) {
-	logPrefix := fmt.Sprintf("%s[%s]:", prefix, pw.watchPath)
-	logger.ErrLogf(logPrefix, format, args...)
-}
-
-func (qw *queryWatch) errlogf(prefix, format string, args ...any) {
-	logPrefix := fmt.Sprintf("%s[%s?%s]:", prefix, qw.parentPathW.watchPath, qw.pathQuery)
 	logger.ErrLogf(logPrefix, format, args...)
 }
