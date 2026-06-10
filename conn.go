@@ -1,306 +1,288 @@
 package hotload
 
+//go:generate go run ./internal/gen
+
 import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
 	"errors"
-	"fmt"
-	"sync"
 	"sync/atomic"
-
-	"github.com/infobloxopen/hotload/logger"
-	"github.com/teivah/onecontext"
 )
 
-// managedConn wraps a sql/driver.Conn so that it can be closed by
-// a supervising context.
-type managedConn struct {
-	ctx       context.Context
-	dsn       string
-	redactDsn string
-	conn      driver.Conn
-	reset     bool
-	killed    bool
-	mu        sync.RWMutex
-
-	// callback function to be called after the connection is closed
-	afterClose func(*managedConn)
-
-	execStmtsCounter  atomic.Int64 // count the number of exec calls in a transaction
-	queryStmtsCounter atomic.Int64 // count the number of query calls in a transaction
+// baseConn wraps an underlying driver.Conn so that it can be retired by the
+// generation that owns it. baseConn implements driver.Conn plus the optional
+// interfaces whose behavior hotload must control or whose stdlib fallback it
+// can replicate exactly: ConnPrepareContext, ConnBeginTx, SessionResetter
+// and Validator. The remaining optional interfaces (ExecerContext,
+// QueryerContext, Pinger, NamedValueChecker) are exposed only when the
+// underlying conn supports them, via the generated combination wrappers
+// returned by wrapConn.
+type baseConn struct {
+	inner      driver.Conn
+	gen        *generation
+	group      *group
+	dsn        string
+	redactDsn  string
+	closed     atomic.Bool
+	killed     atomic.Bool
+	execStmts  atomic.Int64 // exec statements since the last completed transaction
+	queryStmts atomic.Int64 // query statements since the last completed transaction
 }
 
-// BeginTx calls the underlying BeginTx method unless the supervising context
-// is closed.
-// Returns an error if the underlying driver doesn't implement
-// driver.ConnBeginTx interface and TxOptions are non default. If TxOptions are
-// of default values it will call the underlying Begin method as like sql
-// package.
-// If the context is canceled by the user this method will call Tx.Rollback.
-func (c *managedConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
-	select {
-	case <-c.ctx.Done():
-		c.close()
-		return nil, driver.ErrBadConn
-	default:
+// opCtx returns a context canceled when either the caller's ctx or the
+// owning generation's ctx is canceled. The returned release function must be
+// called (usually deferred) when the operation completes; it unregisters the
+// cancellation relay so no resources outlive the call. opCtx returns a nil
+// context if the generation is already retired; the caller should return
+// driver.ErrBadConn so database/sql retries on a fresh connection.
+func (c *baseConn) opCtx(ctx context.Context) (context.Context, func()) {
+	gen := c.gen
+	gen.ops.Add(1)
+	if gen.ctx.Err() != nil {
+		gen.ops.Add(-1)
+		return nil, nil
 	}
+	mctx, cancel := context.WithCancelCause(ctx)
+	stop := context.AfterFunc(gen.ctx, func() {
+		cancel(context.Cause(gen.ctx))
+	})
+	release := func() {
+		stop()
+		cancel(nil)
+		gen.ops.Add(-1)
+	}
+	return mctx, release
+}
 
-	if conn, ok := c.conn.(driver.ConnBeginTx); ok {
-		tx, err := conn.BeginTx(ctx, opts)
+// retired reports whether the conn should no longer be used: its generation
+// was drained or killed, or the conn itself was closed.
+func (c *baseConn) retired() bool {
+	return c.closed.Load() || c.gen.retired()
+}
+
+func (c *baseConn) Prepare(query string) (driver.Stmt, error) {
+	if c.gen.ctx.Err() != nil {
+		return nil, driver.ErrBadConn
+	}
+	stmt, err := c.inner.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+	return wrapStmt(&baseStmt{inner: stmt, conn: c}), nil
+}
+
+// PrepareContext prepares a statement, honoring both the caller's context
+// and the generation's context. When the underlying conn does not implement
+// driver.ConnPrepareContext this replicates database/sql's fallback exactly:
+// prepare without a context, then if the context is done, close the
+// statement and return the context's error.
+func (c *baseConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
+	octx, release := c.opCtx(ctx)
+	if octx == nil {
+		return nil, driver.ErrBadConn
+	}
+	defer release()
+
+	if cp, ok := c.inner.(driver.ConnPrepareContext); ok {
+		stmt, err := cp.PrepareContext(octx, query)
 		if err != nil {
 			return nil, err
 		}
+		return wrapStmt(&baseStmt{inner: stmt, conn: c}), nil
+	}
 
+	stmt, err := c.inner.Prepare(query)
+	if err == nil {
+		select {
+		case <-octx.Done():
+			stmt.Close()
+			return nil, octx.Err()
+		default:
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return wrapStmt(&baseStmt{inner: stmt, conn: c}), nil
+}
+
+func (c *baseConn) Begin() (driver.Tx, error) {
+	if c.gen.ctx.Err() != nil {
+		return nil, driver.ErrBadConn
+	}
+	tx, err := c.inner.Begin()
+	if err != nil {
+		return nil, err
+	}
+	return &managedTx{tx: tx, conn: c, ctx: context.Background()}, nil
+}
+
+// BeginTx starts a transaction. The caller's context is deliberately passed
+// through unmerged: some drivers bind the context to the transaction's
+// lifetime, and canceling a merged context when this call returns would
+// roll back live transactions. The generation context is checked at entry
+// instead; forceKill reaches in-flight transactions by closing the conn.
+// When the underlying conn does not implement driver.ConnBeginTx this
+// replicates database/sql's fallback exactly.
+func (c *baseConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	if c.gen.ctx.Err() != nil {
+		return nil, driver.ErrBadConn
+	}
+
+	if cb, ok := c.inner.(driver.ConnBeginTx); ok {
+		tx, err := cb.BeginTx(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
 		return &managedTx{tx: tx, conn: c, ctx: ctx}, nil
 	}
 
-	// same as is defined in go sql package to call Begin method if the TxOptions are default
 	if sql.IsolationLevel(opts.Isolation) != sql.LevelDefault {
 		return nil, errors.New("hotload: underlying driver does not support non-default isolation level")
 	}
-
 	if opts.ReadOnly {
 		return nil, errors.New("hotload: underlying driver does not support read-only transactions")
 	}
 
-	tx, err := c.conn.Begin()
-	if err == nil {
-		select {
-		default:
-		case <-ctx.Done():
-			tx.Rollback()
-			return nil, ctx.Err()
-		}
+	tx, err := c.inner.Begin()
+	if err != nil {
+		return nil, err
 	}
-
-	return tx, err
-}
-
-func newManagedConn(ctx context.Context, dsn, redactDsn string, conn driver.Conn, afterClose func(*managedConn)) *managedConn {
-	return &managedConn{
-		ctx:        ctx,
-		dsn:        dsn,
-		redactDsn:  redactDsn,
-		conn:       conn,
-		afterClose: afterClose,
-	}
-}
-
-func (c *managedConn) Exec(query string, args []driver.Value) (driver.Result, error) {
-	c.logf("managedConn.Exec", "Exec")
-
-	connCtx, ok := c.conn.(driver.ExecerContext)
-	if ok {
-		namedArgs := make([]driver.NamedValue, len(args), len(args))
-		for i := 0; i < len(args); i++ {
-			namedArgs[i].Name = ""
-			namedArgs[i].Ordinal = i
-			namedArgs[i].Value = args[i]
-		}
-		c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
-		c.logf("managedConn.Exec", "calling underlying conn.ExecContext()")
-		return connCtx.ExecContext(c.ctx, query, namedArgs)
-	}
-
-	connExr, ok := c.conn.(driver.Execer)
-	if ok {
-		c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
-		c.logf("managedConn.Exec", "calling underlying conn.Exec()")
-		return connExr.Exec(query, args)
-	}
-
-	return nil, driver.ErrSkip
-}
-
-func (c *managedConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
-	c.logf("managedConn.ExecContext", "ExecContext")
-	conn, ok := c.conn.(driver.ExecerContext)
-	if !ok {
-		return nil, driver.ErrSkip
-	}
-	c.incExecStmtsCounter() //increment the exec counter to keep track of the number of exec calls
-	c.logf("managedConn.ExecContext", "calling underlying conn.ExecContext()")
-	mergedCtx, cancel := onecontext.Merge(c.ctx, ctx)
-	defer cancel()
-	return conn.ExecContext(mergedCtx, query, args)
-}
-
-func (c *managedConn) CheckNamedValue(namedValue *driver.NamedValue) error {
-	conn, ok := c.conn.(driver.NamedValueChecker)
-	if !ok {
-		return driver.ErrSkip
-	}
-	return conn.CheckNamedValue(namedValue)
-}
-
-func (c *managedConn) Query(query string, args []driver.Value) (driver.Rows, error) {
-	c.logf("managedConn.Query", "Query")
-
-	connCtx, ok := c.conn.(driver.QueryerContext)
-	if ok {
-		namedArgs := make([]driver.NamedValue, len(args), len(args))
-		for i := 0; i < len(args); i++ {
-			namedArgs[i].Name = ""
-			namedArgs[i].Ordinal = i
-			namedArgs[i].Value = args[i]
-		}
-		c.incQueryStmtsCounter() //increment the query counter to keep track of the number of query calls
-		c.logf("managedConn.Query", "calling underlying conn.QueryContext()")
-		return connCtx.QueryContext(c.ctx, query, namedArgs)
-	}
-
-	connQyr, ok := c.conn.(driver.Queryer)
-	if ok {
-		namedArgs := make([]driver.NamedValue, len(args), len(args))
-		for i := 0; i < len(args); i++ {
-			namedArgs[i].Name = ""
-			namedArgs[i].Ordinal = i
-			namedArgs[i].Value = args[i]
-		}
-		c.incQueryStmtsCounter() //increment the query counter to keep track of the number of query calls
-		c.logf("managedConn.Query", "calling underlying conn.Query()")
-		return connQyr.Query(query, args)
-	}
-
-	return nil, driver.ErrSkip
-}
-
-func (c *managedConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	c.logf("managedConn.QueryContext", "QueryContext")
-	conn, ok := c.conn.(driver.QueryerContext)
-	if !ok {
-		return nil, driver.ErrSkip
-	}
-	c.incQueryStmtsCounter() //increment the query counter to keep track of the number of query calls
-	c.logf("managedConn.QueryContext", "calling underlying conn.QueryContext()")
-
-	// TODO
-	// We would like to merge the hotload-context with the query-context here,
-	// and then cancel the merged-context to prevent goroutine-leaks
-	// (similar to ExecContext() above).
-	// However the Rows object returned seems to contain the merged-context.
-	// Canceling the merged-context here invalidates the returned Rows object,
-	// and causes any cursor iteration of the returned Rows objects to fail
-	// with context-canceled error.
-
-	return conn.QueryContext(ctx, query, args)
-}
-
-func (c *managedConn) Prepare(query string) (driver.Stmt, error) {
 	select {
-	case <-c.ctx.Done():
-		c.logf("managedConn.Prepare", "ctx done, calling close()")
-		c.close()
-		return nil, driver.ErrBadConn
+	case <-ctx.Done():
+		tx.Rollback()
+		return nil, ctx.Err()
 	default:
 	}
-	c.logf("managedConn.Prepare", "calling underlying Prepare()")
-	return c.conn.Prepare(query)
+	return &managedTx{tx: tx, conn: c, ctx: ctx}, nil
 }
 
-// Begin calls the underlying Begin method unless the supervising
-// context is closed.
-func (c *managedConn) Begin() (driver.Tx, error) {
-	select {
-	case <-c.ctx.Done():
-		c.close()
-		return nil, driver.ErrBadConn
-	default:
-	}
-	return c.conn.Begin()
+func (c *baseConn) Close() error {
+	return c.closeConn(false)
 }
 
-func (c *managedConn) IsValid() bool {
-	select {
-	case <-c.ctx.Done():
-		c.logf("managedConn.IsValid", "ctx done, calling close()")
-		c.close()
-		return false
-	default:
-	}
-	s, ok := c.conn.(driver.Validator)
-	if !ok {
-		return true
-	}
-	c.logf("managedConn.IsValid", "calling underlying IsValid()")
-	return s.IsValid()
-}
-
-func (c *managedConn) ResetSession(ctx context.Context) error {
-	if c.GetReset() {
-		c.logf("managedConn.ResetSession", "already reset")
-		return driver.ErrBadConn
-	}
-
-	s, ok := c.conn.(driver.SessionResetter)
-	if !ok {
+// closeConn closes the underlying conn exactly once, no matter how many
+// paths race to close it (the pool, a generation kill, or both).
+func (c *baseConn) closeConn(killed bool) error {
+	if !c.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-
-	c.logf("managedConn.ResetSession", "calling underlying ResetSession()")
-	return s.ResetSession(ctx)
-}
-
-func (c *managedConn) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	err := c.close()
-
-	if err == nil {
-		c.killed = true
+	if killed {
+		c.killed.Store(true)
 	}
-	c.logf("managedConn.Close", "closed")
-
+	err := c.inner.Close()
+	c.gen.remove(c)
+	emitConnClose(ConnEvent{GroupName: c.group.name, RedactedDSN: c.redactDsn, Killed: killed})
 	return err
 }
 
-func (c *managedConn) close() error {
-	if c.afterClose != nil {
-		defer c.afterClose(c)
+// ResetSession is called by database/sql before reusing a pooled conn. A
+// drained or killed generation answers driver.ErrBadConn so the pool
+// discards the conn and dials a fresh one on the current DSN.
+func (c *baseConn) ResetSession(ctx context.Context) error {
+	if c.retired() {
+		return driver.ErrBadConn
 	}
-	c.logf("managedConn.close", "calling underlying Close()")
-	return c.conn.Close()
+	if sr, ok := c.inner.(driver.SessionResetter); ok {
+		return sr.ResetSession(ctx)
+	}
+	return nil
 }
 
-func (c *managedConn) GetReset() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	c.logf("managedConn.GetReset", "reset=%v", c.reset)
-	return c.reset
+// IsValid is called by database/sql when returning a conn to the pool.
+func (c *baseConn) IsValid() bool {
+	if c.retired() {
+		return false
+	}
+	if v, ok := c.inner.(driver.Validator); ok {
+		return v.IsValid()
+	}
+	return true
 }
 
-func (c *managedConn) Reset(v bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.reset = v
-	c.logf("managedConn.Reset", "reset=%v", v)
+// execContext backs the generated ExecerContext wrappers. It is only
+// reachable when the underlying conn implements ExecerContext or the legacy
+// Execer; for the legacy case it replicates database/sql's fallback exactly
+// (convert named args, poll the context, call Exec).
+func (c *baseConn) execContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	octx, release := c.opCtx(ctx)
+	if octx == nil {
+		return nil, driver.ErrBadConn
+	}
+	defer release()
+	c.execStmts.Add(1)
+
+	if ec, ok := c.inner.(driver.ExecerContext); ok {
+		return ec.ExecContext(octx, query, args)
+	}
+
+	dargs, err := namedValueToValue(args)
+	if err != nil {
+		return nil, err
+	}
+	select {
+	case <-octx.Done():
+		return nil, octx.Err()
+	default:
+	}
+	return c.inner.(driver.Execer).Exec(query, dargs)
 }
 
-func (c *managedConn) GetKill() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	c.logf("managedConn.GetKill", "killed=%v", c.killed)
-	return c.killed
+// queryContext backs the generated QueryerContext wrappers. The caller's
+// context is deliberately passed through unmerged: the returned driver.Rows
+// captures the context, and canceling a merged context when this call
+// returns would make cursor iteration fail with a context-canceled error.
+// The generation context is checked at entry instead; forceKill reaches
+// in-flight queries by closing the conn.
+func (c *baseConn) queryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	if c.gen.ctx.Err() != nil {
+		return nil, driver.ErrBadConn
+	}
+	c.queryStmts.Add(1)
+
+	if qc, ok := c.inner.(driver.QueryerContext); ok {
+		return qc.QueryContext(ctx, query, args)
+	}
+
+	dargs, err := namedValueToValue(args)
+	if err != nil {
+		return nil, err
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	return c.inner.(driver.Queryer).Query(query, dargs)
 }
 
-func (c *managedConn) incExecStmtsCounter() {
-	c.execStmtsCounter.Add(1)
+// ping backs the generated Pinger wrappers; only reachable when the
+// underlying conn implements driver.Pinger.
+func (c *baseConn) ping(ctx context.Context) error {
+	octx, release := c.opCtx(ctx)
+	if octx == nil {
+		return driver.ErrBadConn
+	}
+	defer release()
+	return c.inner.(driver.Pinger).Ping(octx)
 }
 
-func (c *managedConn) resetExecStmtsCounter() {
-	c.execStmtsCounter.Store(0)
+// checkNamedValue backs the generated NamedValueChecker wrappers; only
+// reachable when the underlying conn implements driver.NamedValueChecker.
+func (c *baseConn) checkNamedValue(nv *driver.NamedValue) error {
+	return c.inner.(driver.NamedValueChecker).CheckNamedValue(nv)
 }
 
-func (c *managedConn) incQueryStmtsCounter() {
-	c.queryStmtsCounter.Add(1)
-}
-
-func (c *managedConn) resetQueryStmtsCounter() {
-	c.queryStmtsCounter.Store(0)
-}
-
-func (c *managedConn) logf(prefix, format string, args ...any) {
-	logPrefix := fmt.Sprintf("%s[%s]:", prefix, c.redactDsn)
-	logger.Logf(logPrefix, format, args...)
+// namedValueToValue converts named args to positional args, mirroring the
+// unexported helper of the same name in database/sql.
+func namedValueToValue(named []driver.NamedValue) ([]driver.Value, error) {
+	dargs := make([]driver.Value, len(named))
+	for n, param := range named {
+		if len(param.Name) > 0 {
+			return nil, errors.New("sql: driver does not support the use of Named Parameters")
+		}
+		dargs[n] = param.Value
+	}
+	return dargs, nil
 }

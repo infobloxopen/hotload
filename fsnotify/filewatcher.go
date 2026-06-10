@@ -2,6 +2,7 @@ package fsnotify
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -10,11 +11,9 @@ import (
 	"time"
 
 	rfsnotify "github.com/fsnotify/fsnotify"
-	"github.com/infobloxopen/hotload"
-	"github.com/infobloxopen/hotload/internal"
-	"github.com/infobloxopen/hotload/logger"
-	"github.com/infobloxopen/hotload/metrics"
-	"github.com/pkg/errors"
+	hotload "github.com/infobloxopen/hotload/v3"
+	"github.com/infobloxopen/hotload/v3/internal"
+	"github.com/infobloxopen/hotload/v3/logger"
 )
 
 func init() {
@@ -64,7 +63,7 @@ type pathWatch struct {
 func (s *Strategy) readConfigFile(path string) (v []byte, err error) {
 	v, err = os.ReadFile(path)
 	if err != nil {
-		return nil, errors.Wrapf(err, "could not read %v", path)
+		return nil, fmt.Errorf("could not read %v: %w", path, err)
 	}
 	v = []byte(strings.TrimSpace(string(v)))
 	return
@@ -174,12 +173,6 @@ func (s *Strategy) Watch(ctx context.Context, pth string, pathQry string) (value
 		s.logf("fsnotify.Watch", "new path to be watched: '%s'", pth)
 		if err := s.watcher.Add(pth); err != nil {
 			return "", nil, err
-		}
-		if err := metrics.AddToDefaultPathChksum(pth); err != nil {
-			if err != metrics.ErrDuplicatePath {
-				s.errlogf("fsnotify.Watch", "AddToDefaultPathChksum(%s) failed, err=%v", pth, err)
-				return "", nil, err
-			}
 		}
 		bs, err := s.readConfigFile(pth)
 		if err != nil {

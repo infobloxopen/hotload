@@ -1,10 +1,10 @@
 package internal
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"sync"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 const (
@@ -69,11 +69,11 @@ func (rss *RandomSecretSink) Add(actualSecret string) (randomSecret string, err 
 		delete(rss.secretStore, oldestData.actualSecret)
 	}
 
-	guid, err := uuid.NewRandom()
-	if err != nil {
+	buf := make([]byte, randomLen/2)
+	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
-	randomSecret = guid.String()[:randomLen]
+	randomSecret = hex.EncodeToString(buf)
 
 	secretData = &RandomSecretData{
 		actualSecret: actualSecret,
