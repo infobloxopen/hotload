@@ -63,10 +63,28 @@ func userDsn(pass string) string {
 		testDbUser, pass, postgresHost, postgresPort)
 }
 
-// requirePostgres skips the test when no server is reachable and lazily
-// provisions the test user and table.
+// enabled reports whether the integration tests were explicitly requested:
+// either HOTLOAD_INTEGRATION_TESTS is truthy (set by `make
+// local-integration-tests`) or a postgres host/port was pointed at via the
+// environment. An implicit "is something listening on 5432" probe is not
+// enough — an unrelated local postgres would fail authentication instead of
+// skipping.
+func enabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("HOTLOAD_INTEGRATION_TESTS"))) {
+	case "1", "true", "yes":
+		return true
+	}
+	return os.Getenv("HOTLOAD_INTEGRATION_TEST_POSTGRES_HOST") != "" ||
+		os.Getenv("HOTLOAD_INTEGRATION_TEST_POSTGRES_PORT") != ""
+}
+
+// requirePostgres skips the test unless integration testing was requested
+// and the server is reachable; it lazily provisions the test user and table.
 func requirePostgres(t *testing.T) {
 	t.Helper()
+	if !enabled() {
+		t.Skip("skipping: integration tests not requested (run via `make local-integration-tests`, or set HOTLOAD_INTEGRATION_TESTS=1)")
+	}
 	addr := net.JoinHostPort(postgresHost, postgresPort)
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
