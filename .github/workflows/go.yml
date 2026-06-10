@@ -7,21 +7,32 @@ on:
     branches: [ main ]
 
 jobs:
-  build:
+  unit:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # database/sql's bad-conn retry behavior shifts subtly between Go
+        # releases; test the two most recent.
+        go-version: [ '1.23.x', '1.24.x' ]
     steps:
-    - uses: actions/checkout@v2
-    - name: Unit Tests
-      run: make test-docker
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+      - name: Lint, generate-check, unit tests, dependency budget
+        run: make ci-test
 
-  integration-tests:
+  integration:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@master
-    - uses: engineerd/setup-kind@v0.5.0
-      with:
-        version: "v0.11.1"
-    - name: Integration Tests
-      run: |
-        kubectl cluster-info
-        make ci-integration-tests
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+      - name: Start postgres
+        run: make postgres-docker-compose-up
+      - name: Integration tests
+        run: make local-integration-tests
+      - name: Stop postgres
+        if: always()
+        run: make postgres-docker-compose-down

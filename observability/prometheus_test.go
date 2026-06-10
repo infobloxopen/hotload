@@ -9,8 +9,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	hotload "github.com/infobloxopen/hotload/v3"
 	"github.com/infobloxopen/hotload/observability/promtest"
+	hotload "github.com/infobloxopen/hotload/v3"
 )
 
 func TestConfigChangeMetrics(t *testing.T) {

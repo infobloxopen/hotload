@@ -1,76 +1,58 @@
-GIT_COMMIT ?= $(shell git describe --dirty=-unsupported --always --tags || echo pre-commit)
-IMAGE_NAME ?= hotload-integration-tests:$(GIT_COMMIT)
+# The repository holds three Go modules: the hotload core (.), the
+# prometheus adapter (observability), and the postgres integration tests
+# (test/integration). The committed go.work ties them together for
+# development; most targets loop over all of them.
+MODULES := . observability test/integration
 
-get:
-	go get -t ./...
+.PHONY: fmt vet tidy build test generate no-diff dep-budget ci-test \
+	postgres-docker-compose-up postgres-docker-compose-down local-integration-tests
 
-fmt: get
-	go fmt ./...
+fmt:
+	@for m in $(MODULES); do (cd $$m && go fmt ./...) || exit 1; done
+
+vet:
+	@for m in $(MODULES); do (cd $$m && go vet ./...) || exit 1; done
 
 tidy:
-	go mod tidy
+	@for m in $(MODULES); do (cd $$m && go mod tidy) || exit 1; done
 
-# assert that there is no difference after running format
+build:
+	@for m in $(MODULES); do (cd $$m && go build ./...) || exit 1; done
+
+# Unit tests. The integration module skips itself when postgres is not
+# reachable; use local-integration-tests to run it for real.
+test:
+	@for m in $(MODULES); do (cd $$m && go test -race -timeout=5m -count=1 ./...) || exit 1; done
+
+# Regenerate the optional-interface combination wrappers (conn/stmt) and the
+# dbfake capability views.
+generate:
+	go generate ./...
+
+# assert that there is no difference after running format/tidy/generate
 no-diff:
 	git diff --exit-code
 
-vet: fmt
-	go vet ./...
+# The hotload core must stay near-stdlib-only: its sole direct dependency is
+# fsnotify. Fails when dependency creep adds more.
+dep-budget:
+	@reqs=$$(go mod edit -json | go run ./internal/depbudget); \
+	if [ "$$reqs" != "github.com/fsnotify/fsnotify" ]; then \
+		echo "dependency budget exceeded; direct requires of the root module:"; \
+		echo "$$reqs"; \
+		exit 1; \
+	fi
 
-build: vet
-	go build ./...
-
-get-ginkgo:
-	go get github.com/onsi/ginkgo/v2/ginkgo
-
-test: vet get-ginkgo go-test
-
-go-test:
-	go test -race github.com/infobloxopen/hotload \
-		github.com/infobloxopen/hotload/fsnotify \
-		github.com/infobloxopen/hotload/internal \
-		github.com/infobloxopen/hotload/metrics \
-		github.com/infobloxopen/hotload/modtime
-
-
-# test target which includes the no-diff fail condition
-ci-test: fmt tidy no-diff test
-
-test-docker:
-	docker build -f Dockerfile.test .
-
-.integ-test-image-$(GIT_COMMIT):
-	docker build -f Dockerfile.integrationtest . -t $(IMAGE_NAME)
-
-integ-test-image: .integ-test-image-$(GIT_COMMIT)
-
-# this'll run outside of the build container
-deploy-integration-tests:
-	helm upgrade hotload-integration-tests integrationtests/helm/hotload-integration-tests -i --set image.tag=$(GIT_COMMIT)
-
-build-test: vet get-ginkgo
-	go test -c ./integrationtests
-
-kind-create-cluster:
-	kind create cluster
-
-kind-load:
-	kind load docker-image $(IMAGE_NAME)
-
-ci-integration-tests: integ-test-image kind-load deploy-integration-tests
-	(helm test --timeout=600s hotload-integration-tests || (kubectl logs hotload-integration-tests-job && exit 1)) && kubectl logs hotload-integration-tests-job
-
-delete-all:
-	helm uninstall hotload-integration-tests || true
-	kubectl delete pvc --all || true
-	kubectl delete pods --all || true
+ci-test: fmt tidy generate no-diff vet test dep-budget
 
 postgres-docker-compose-up:
-	cd integrationtests/docker; docker compose up --detach
+	cd test/integration/docker; docker compose up --detach --wait
 
 postgres-docker-compose-down:
-	cd integrationtests/docker; docker compose down
+	cd test/integration/docker; docker compose down
 
-# Requires postgres db, see target postgres-docker-compose-up
+# Requires postgres, see target postgres-docker-compose-up
 local-integration-tests:
-	HOTLOAD_PATH_CHKSUM_METRICS_ENABLE=true go test -v -race -timeout=3m -count=1 github.com/infobloxopen/hotload/integrationtests
+	cd test/integration && \
+		HOTLOAD_INTEGRATION_TESTS=1 HOTLOAD_PATH_CHKSUM_METRICS_ENABLE=true \
+		go test -v -race -timeout=5m -count=1 ./...
