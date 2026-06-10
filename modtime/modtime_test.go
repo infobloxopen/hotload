@@ -10,6 +10,7 @@ import (
 
 	hotload "github.com/infobloxopen/hotload/v3"
 	"github.com/infobloxopen/hotload/v3/internal"
+	"github.com/infobloxopen/hotload/v3/internal/testutil"
 )
 
 const testStrategy = "fsnotify"
@@ -56,13 +57,7 @@ func (r *eventRecorder) forPath(path string) []hotload.ModTimeEvent {
 
 func waitFor(t *testing.T, timeout time.Duration, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	testutil.WaitFor(t, timeout, what, cond)
 }
 
 // TestAgainstUnixFS verifies the monitor works against the real filesystem.

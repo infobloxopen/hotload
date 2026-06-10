@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -298,6 +299,55 @@ func TestGroupTeardownAndSharing(t *testing.T) {
 	testutil.WaitFor(t, 2*time.Second, "watch teardown", func() bool {
 		return fx.strat.Watches() == 0
 	})
+}
+
+// TestReopenWhileClosing races the close of a DSN's last sql.DB against a
+// fresh sql.Open of the same DSN. Whatever the interleaving, the surviving
+// handle must keep receiving config changes: the dying group's watch
+// teardown is serialized with new watch creation, so a new group can never
+// be handed a doomed update channel.
+func TestReopenWhileClosing(t *testing.T) {
+	testutil.NoLeaks(t)
+	fx := newFixture(t, fxCfg{noDB: true})
+
+	db, err := sql.Open("hotload", fx.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 20; i++ {
+		var (
+			wg  sync.WaitGroup
+			db2 *sql.DB
+		)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			db.Close()
+		}()
+		go func() {
+			defer wg.Done()
+			var err error
+			db2, err = sql.Open("hotload", fx.dsn)
+			if err != nil {
+				t.Errorf("reopen: %v", err)
+			}
+		}()
+		wg.Wait()
+		if t.Failed() {
+			t.FailNow()
+		}
+
+		// The surviving handle must observe a config change.
+		want := fmt.Sprintf("dsn-rw-%d", i)
+		fx.push(want)
+		testutil.WaitFor(t, 5*time.Second, "change to propagate to the reopened db", func() bool {
+			var got string
+			return db2.QueryRow("SELECT dsn").Scan(&got) == nil && got == want
+		})
+		db = db2
+	}
+	db.Close()
 }
 
 // TestStrategyChannelClose: when the strategy closes its update channel the
