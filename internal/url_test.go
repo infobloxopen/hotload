@@ -3,40 +3,58 @@ package internal
 import (
 	"fmt"
 	"net/url"
+	"regexp"
+	"strings"
 	"testing"
-
-	"github.com/google/uuid"
 )
 
 func TestRedactUrl(t *testing.T) {
-	nrr := NewNonRandomReader(1)
-	uuid.SetRand(nrr)
-
 	testcases := []struct {
-		inputDsn  string
-		expectDsn string
+		inputDsn string
+		// expectPattern matches the redacted DSN; the password is replaced
+		// with a random token, asserted separately.
+		expectPattern string
 	}{
 		{
-			inputDsn:  "qwerty",
-			expectDsn: "//u---r:01020304@qwerty",
+			inputDsn:      "qwerty",
+			expectPattern: `^//u---r:[0-9a-f]{8}@qwerty$`,
 		},
 		{
-			inputDsn:  "mysql://u:p@amazon.rds.com:5432/contacts",
-			expectDsn: "mysql://u---u:11121314@amazon.rds.com:5432/contacts",
+			inputDsn:      "mysql://u:p@amazon.rds.com:5432/contacts",
+			expectPattern: `^mysql://u---u:[0-9a-f]{8}@amazon\.rds\.com:5432/contacts$`,
 		},
 		{
-			inputDsn:  "postgresql://admin:test@localhost:5432/hotload_test?sslmode=disable",
-			expectDsn: "postgresql://a---n:21222324@localhost:5432/hotload_test?sslmode=disable",
+			inputDsn:      "postgresql://admin:test@localhost:5432/hotload_test?sslmode=disable",
+			expectPattern: `^postgresql://a---n:[0-9a-f]{8}@localhost:5432/hotload_test\?sslmode=disable$`,
 		},
 	}
 
 	for _, tt := range testcases {
 		t.Run(tt.inputDsn, func(t *testing.T) {
 			gotDsn := RedactUrl(tt.inputDsn)
-			if gotDsn != tt.expectDsn {
-				t.Errorf("expectDsn='%s' gotDsn='%s'", tt.expectDsn, gotDsn)
+			re := regexp.MustCompile(tt.expectPattern)
+			if !re.MatchString(gotDsn) {
+				t.Errorf("RedactUrl(%q) = %q, want match for %q", tt.inputDsn, gotDsn, tt.expectPattern)
+			}
+			if strings.Contains(gotDsn, ":test@") {
+				t.Errorf("RedactUrl(%q) = %q leaked the password", tt.inputDsn, gotDsn)
 			}
 		})
+	}
+}
+
+// TestRedactUrlStablePassword verifies that the same password maps to the
+// same random token across calls, so log lines remain correlatable.
+func TestRedactUrlStablePassword(t *testing.T) {
+	first := RedactUrl("postgresql://admin:hunter2@localhost/db")
+	second := RedactUrl("postgresql://admin:hunter2@localhost/db")
+	if first != second {
+		t.Errorf("redaction not stable for identical input: %q vs %q", first, second)
+	}
+
+	other := RedactUrl("postgresql://admin:different@localhost/db")
+	if other == first {
+		t.Errorf("different passwords redacted to the same DSN: %q", other)
 	}
 }
 

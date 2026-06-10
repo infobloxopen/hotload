@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/infobloxopen/hotload/logger"
+	"github.com/infobloxopen/hotload/v3/logger"
 )
 
 var (

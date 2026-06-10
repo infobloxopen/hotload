@@ -1,131 +1,234 @@
 package hotload
 
 import (
+	"context"
 	"database/sql/driver"
 	"fmt"
-	"reflect"
+	"net/url"
 	"testing"
+	"time"
+
+	"github.com/infobloxopen/hotload/v3/internal/dbfake"
 )
 
-type testDriver struct {
-	options map[string]string
-}
-
-func (d *testDriver) Open(name string) (driver.Conn, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func withConnectionStringOptions(options map[string]string) driverOption {
-	return func(di *driverInstance) {
-		di.options = options
-	}
-}
-
-func TestRegisterSQLDriverWithOptions(t *testing.T) {
-	type args struct {
-		name    string
-		driver  driver.Driver
-		options []driverOption
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		{
-			name: "driver with an option",
-			args: args{
-				name:   "test with options",
-				driver: &testDriver{},
-				options: []driverOption{
-					withConnectionStringOptions(map[string]string{"a": "b"}),
-				},
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			RegisterSQLDriver(tt.args.name, tt.args.driver, tt.args.options...)
-			mu.Lock()
-			defer mu.Unlock()
-
-			d, ok := sqlDrivers[tt.args.name]
-			if !ok {
-				t.Errorf("RegisterSQLDriver() did not register the driver")
-			}
-			gotOptions := d.driver.(*testDriver).options
-			if reflect.DeepEqual(gotOptions, tt.args.options) {
-				t.Errorf("RegisterSQLDriver() did not set the options")
-			}
-		})
-	}
-}
-
 func Test_mergeConnStringOptions(t *testing.T) {
-	type args struct {
+	tests := []struct {
+		name    string
 		dsn     string
 		options map[string]string
-	}
-	tests := []struct {
-		name    string
-		args    args
 		want    string
 		wantErr bool
 	}{
 		{
 			name: "empty",
-			args: args{
-				dsn:     "",
-				options: nil,
-			},
-			want:    "",
-			wantErr: false,
+			want: "",
 		},
 		{
 			name: "bad dsn with no options",
-			args: args{
-				dsn:     "bad dsn",
-				options: nil,
-			},
-			want:    "bad dsn",
-			wantErr: false,
+			dsn:  "bad dsn",
+			want: "bad dsn",
 		},
 		{
-			name: "bad dsn with options",
-			args: args{
-				dsn:     "bad dsn",
-				options: map[string]string{"a": "b"},
-			},
-			want:    "",
+			name:    "bad dsn with options",
+			dsn:     "bad dsn",
+			options: map[string]string{"a": "b"},
 			wantErr: true,
 		},
 		{
 			name: "good dsn with no options",
-			args: args{
-				dsn: "postgres://localhost:5432/postgres?sslmode=disable",
-			},
-			want:    "postgres://localhost:5432/postgres?sslmode=disable",
-			wantErr: false,
+			dsn:  "postgres://localhost:5432/postgres?sslmode=disable",
+			want: "postgres://localhost:5432/postgres?sslmode=disable",
 		},
 		{
-			name: "good dsn with options",
-			args: args{
-				dsn:     "postgres://localhost:5432/postgres?sslmode=disable",
-				options: map[string]string{"disable_cache": "true"},
-			},
+			name:    "good dsn with options",
+			dsn:     "postgres://localhost:5432/postgres?sslmode=disable",
+			options: map[string]string{"disable_cache": "true"},
 			want:    "postgres://localhost:5432/postgres?disable_cache=true&sslmode=disable",
-			wantErr: false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := mergeConnStringOptions(tt.args.dsn, tt.args.options)
+			got, err := mergeConnStringOptions(tt.dsn, tt.options)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("mergeConnStringOptions() error = %v, wantErr %v", err, tt.wantErr)
-				return
+				t.Fatalf("error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if got != tt.want {
-				t.Errorf("mergeConnStringOptions() = %v, want %v", got, tt.want)
+				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
 	}
+}
+
+func Test_parseGroupParams(t *testing.T) {
+	tests := []struct {
+		name           string
+		query          string
+		wantForceKill  bool
+		wantKillWindow time.Duration
+		wantErr        bool
+	}{
+		{name: "defaults", query: "", wantKillWindow: DefaultKillWindow},
+		{name: "forceKill true", query: "forceKill=true", wantForceKill: true, wantKillWindow: DefaultKillWindow},
+		{name: "forceKill false", query: "forceKill=false", wantKillWindow: DefaultKillWindow},
+		{name: "forceKill garbage", query: "forceKill=yes", wantKillWindow: DefaultKillWindow},
+		{name: "killWindow", query: "killWindow=250ms", wantKillWindow: 250 * time.Millisecond},
+		{name: "killWindow invalid", query: "killWindow=bogus", wantErr: true},
+		{name: "both", query: "forceKill=true&killWindow=1s", wantForceKill: true, wantKillWindow: time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vs, err := url.ParseQuery(tt.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			forceKill, killWindow, err := parseGroupParams(vs)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if forceKill != tt.wantForceKill {
+				t.Errorf("forceKill = %v, want %v", forceKill, tt.wantForceKill)
+			}
+			if killWindow != tt.wantKillWindow {
+				t.Errorf("killWindow = %v, want %v", killWindow, tt.wantKillWindow)
+			}
+		})
+	}
+}
+
+func TestRegisterSQLDriverWithOptions(t *testing.T) {
+	name := "internal-test-driver-options"
+	RegisterSQLDriver(name, &dbfake.Driver{}, WithDriverOptions(map[string]string{"a": "b"}))
+
+	mu.RLock()
+	defer mu.RUnlock()
+	di, ok := sqlDrivers[name]
+	if !ok {
+		t.Fatal("RegisterSQLDriver did not register the driver")
+	}
+	if di.options["a"] != "b" {
+		t.Errorf("options = %v, want a=b", di.options)
+	}
+}
+
+func TestRegisterPanics(t *testing.T) {
+	mustPanic := func(name string, fn func()) {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Error("expected panic")
+				}
+			}()
+			fn()
+		})
+	}
+
+	mustPanic("nil driver", func() { RegisterSQLDriver("internal-test-nil", nil) })
+	mustPanic("dup driver", func() {
+		RegisterSQLDriver("internal-test-dup", &dbfake.Driver{})
+		RegisterSQLDriver("internal-test-dup", &dbfake.Driver{})
+	})
+	mustPanic("nil strategy", func() { RegisterStrategy("internal-test-nilstrat", nil) })
+	mustPanic("dup strategy", func() {
+		s := dbfake.NewStrategy(nil)
+		RegisterStrategy("internal-test-dupstrat", s)
+		defer UnregisterStrategy("internal-test-dupstrat")
+		RegisterStrategy("internal-test-dupstrat", s)
+	})
+}
+
+func TestRegistryLists(t *testing.T) {
+	RegisterSQLDriver("internal-test-list-b", &dbfake.Driver{})
+	RegisterSQLDriver("internal-test-list-a", &dbfake.Driver{})
+	RegisterStrategy("internal-test-list-strat", dbfake.NewStrategy(nil))
+	defer UnregisterStrategy("internal-test-list-strat")
+
+	drivers := SQLDrivers()
+	prev := ""
+	seen := 0
+	for _, d := range drivers {
+		if d < prev {
+			t.Errorf("SQLDrivers not sorted: %v", drivers)
+		}
+		prev = d
+		if d == "internal-test-list-a" || d == "internal-test-list-b" {
+			seen++
+		}
+	}
+	if seen != 2 {
+		t.Errorf("registered drivers missing from SQLDrivers(): %v", drivers)
+	}
+
+	found := false
+	for _, s := range Strategies() {
+		if s == "internal-test-list-strat" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("registered strategy missing from Strategies(): %v", Strategies())
+	}
+}
+
+// TestLegacyOpenPath drives the non-connector driver.Open path directly
+// against a private hdriver instance (the path database/sql no longer uses,
+// but third-party pools might). The group is pinned, so teardown happens via
+// the parent context.
+func TestLegacyOpenPath(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	h := newHdriver(ctx)
+	drv := &dbfake.Driver{Caps: dbfake.CapsModern}
+	strat := dbfake.NewStrategy(map[string]string{"/cfg": "dsn-1"})
+	RegisterSQLDriver("internal-test-legacy-drv", drv)
+	RegisterStrategy("internal-test-legacy-strat", strat)
+	defer UnregisterStrategy("internal-test-legacy-strat")
+
+	name := "internal-test-legacy-strat://internal-test-legacy-drv/cfg"
+	conn, err := h.Open(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	if _, ok := conn.(driver.QueryerContext); !ok {
+		t.Error("legacy-opened conn should expose QueryerContext for a modern underlying conn")
+	}
+
+	// A second open shares the group (one watch).
+	conn2, err := h.Open(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn2.Close()
+	if n := strat.Watches(); n != 1 {
+		t.Errorf("watches = %d, want 1", n)
+	}
+}
+
+// TestEmitHelpersNilSafe ensures hooks with nil fields are skipped.
+func TestEmitHelpersNilSafe(t *testing.T) {
+	resetHooks()
+	defer resetHooks()
+	RegisterHooks(Hooks{}) // all nil
+
+	emitConfigChange(ConfigChangeEvent{})
+	emitConnOpen(ConnEvent{})
+	emitConnClose(ConnEvent{})
+	emitTxComplete(TxEvent{})
+	EmitWatchEvent(WatchEvent{})
+	EmitModTimeEvent(ModTimeEvent{})
+}
+
+func ExampleContextWithExecLabels() {
+	ctx := ContextWithExecLabels(context.Background(), map[string]string{
+		"grpc_service": "ContactsService",
+		"grpc_method":  "ListContacts",
+	})
+	labels := GetExecLabelsFromContext(ctx)
+	fmt.Println(labels["grpc_service"], labels["grpc_method"])
+	// Output: ContactsService ListContacts
 }

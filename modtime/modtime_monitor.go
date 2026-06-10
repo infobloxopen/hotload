@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/infobloxopen/hotload/logger"
-	"github.com/infobloxopen/hotload/metrics"
+	hotload "github.com/infobloxopen/hotload/v3"
+	"github.com/infobloxopen/hotload/v3/logger"
 )
 
 var (
@@ -155,9 +155,12 @@ func (mtm *ModTimeMonitor) checkPathModTimes(ctx context.Context, nowTime time.T
 			pathRec.modTime.Store(newTime)
 		}
 
-		latencyNano := nowTime.Sub(pathRec.modTime.Load().(time.Time))
-		latencySecs := latencyNano.Seconds()
-		metrics.ObserveHotloadModtimeLatencyHistogram(pkey.strategy, pkey.path, latencySecs)
+		latency := nowTime.Sub(pathRec.modTime.Load().(time.Time))
+		hotload.EmitModTimeEvent(hotload.ModTimeEvent{
+			Strategy: pkey.strategy,
+			Path:     pkey.path,
+			Latency:  latency,
+		})
 	}
 }
 
