@@ -99,10 +99,27 @@ string's encoded query parameters. The strategy doesn't have to use a real file 
 the config. `pth` represents a unique string that makes sense to the strategy. For
 example, pth could point to a path in etcd or a kind/id in k8s.
 
-The hotload project ships with one hotload strategy: `fsnotify`.
+The hotload project ships with two strategies:
 
-Note: In your project, if you do not implement your own `Strategy`, and instead choose to use the out-of-the-box
-`fsnotify` strategy, you must import the `fsnotify` package in your project to register at least one strategy with
+* `fsnotify` (in the core module) watches a file on disk — the right choice when the
+  connection string is mounted into the pod (ConfigMap/Secret volumes included).
+* `k8ssecret` (module [`github.com/infobloxopen/hotload/k8ssecret`](k8ssecret/)) watches a
+  Kubernetes Secret through the API server, for deployments that need credentials from a
+  Secret in **another namespace**, which Kubernetes cannot mount as a volume:
+
+  ```go
+  import _ "github.com/infobloxopen/hotload/k8ssecret"
+
+  db, err := sql.Open("hotload", "k8ssecret://pgx/myapp-db?namespace=prod&dsn=dsn.txt")
+  ```
+
+  The path component is the Secret name; `namespace` defaults to the pod's own namespace
+  and `dsn` (the data key holding the connection string) defaults to `dsn.txt`. The pod's
+  service account needs `get` and `watch` on the Secret. It lives in its own module so
+  `client-go` stays out of the hotload core.
+
+Note: In your project, if you do not implement your own `Strategy`, and instead choose to use an out-of-the-box
+strategy, you must import its package in your project to register at least one strategy with
 hotload, otherwise an error will occur at runtime as the `database/sql` package will not be able to locate/load
 your intended hotload strategy as a recognizable driver.
 
@@ -185,6 +202,7 @@ This repository holds three Go modules tied together by the committed `go.work`:
 | Module | Purpose | Dependencies |
 |---|---|---|
 | `github.com/infobloxopen/hotload/v3` | the driver, `fsnotify` strategy, `logger`, `modtime` | `fsnotify` only |
+| `github.com/infobloxopen/hotload/k8ssecret` | Kubernetes Secret strategy (cross-namespace) | `client-go` |
 | `github.com/infobloxopen/hotload/observability` | prometheus adapter + test helpers | prometheus |
 | `github.com/infobloxopen/hotload/test/integration` | postgres integration tests (never imported) | `lib/pq` |
 
