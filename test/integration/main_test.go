@@ -97,6 +97,21 @@ func requirePostgres(t *testing.T) {
 		if setupErr != nil {
 			return
 		}
+		// The TCP probe above only proves something is listening; postgres
+		// may still be initializing (its docker entrypoint restarts the
+		// server after running init scripts). Retry until it answers.
+		deadline := time.Now().Add(60 * time.Second)
+		for {
+			setupErr = adminDB.Ping()
+			if setupErr == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				setupErr = fmt.Errorf("postgres never became ready: %w", setupErr)
+				return
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
 		stmts := []string{
 			"DROP TABLE IF EXISTS test",
 			"DROP USER IF EXISTS " + testDbUser,

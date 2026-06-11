@@ -1,6 +1,3 @@
-version: '3.8'
-
-# postgres configuration mimics helm postgres configured in ../helm/hotload-integration-tests/values.yaml
 services:
   db:
     image: postgres:10.3
@@ -11,8 +8,15 @@ services:
       - HOTLOAD_PATH_CHKSUM_METRICS_ENABLE=true
     ports:
       - '5432:5432'
-    volumes: 
-      # https://github.com/felipewom/docker-compose-postgres
-      # https://geshan.com.np/blog/2021/12/docker-postgres/
+    # `docker compose up --wait` blocks on this. The TCP host target
+    # matters: the postgres entrypoint runs init scripts against a
+    # temporary unix-socket-only server and then restarts; a plain
+    # pg_isready would report ready during that phase.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U admin -d hldatabase"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
       # https://github.com/docker-library/docs/tree/master/postgres#initialization-scripts
       - ./intgtest_init.sql:/docker-entrypoint-initdb.d/intgtest_init.sql
