@@ -25,7 +25,15 @@ func makeSecret(namespace, name string, data map[string]string) *corev1.Secret {
 	}
 }
 
-func fakeClientset(t *testing.T, secrets ...*corev1.Secret) kubernetes.Interface {
+// fakeClientset returns a fake clientset pre-populated with secrets, plus a
+// channel that signals every time a secret watch has been registered with
+// the tracker. Unlike a real API server, the fake ignores the resource
+// version in watch options and only delivers events to already-registered
+// watchers — so tests MUST receive from ready before mutating a secret, or
+// the mutation can race the strategy's watch establishment and be lost (in
+// production the watch replays from the resource version and no such gap
+// exists).
+func fakeClientset(t *testing.T, secrets ...*corev1.Secret) (kubernetes.Interface, <-chan struct{}) {
 	t.Helper()
 	cs := fake.NewClientset()
 	for _, sec := range secrets {
@@ -33,7 +41,25 @@ func fakeClientset(t *testing.T, secrets ...*corev1.Secret) kubernetes.Interface
 			t.Fatal(err)
 		}
 	}
-	return cs
+	ready := make(chan struct{}, 16)
+	cs.PrependWatchReactor("secrets", func(action k8stesting.Action) (bool, watch.Interface, error) {
+		w, err := cs.Tracker().Watch(action.GetResource(), action.GetNamespace())
+		if err != nil {
+			return false, nil, err
+		}
+		ready <- struct{}{} // the watcher is registered; mutations are now visible to it
+		return true, w, nil
+	})
+	return cs, ready
+}
+
+func awaitWatchReady(t *testing.T, ready <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-ready:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the strategy to establish its watch")
+	}
 }
 
 // newTestStrategy returns a strategy on a fake clientset with a short
@@ -88,7 +114,7 @@ func updateSecret(t *testing.T, cs kubernetes.Interface, sec *corev1.Secret) {
 }
 
 func TestWatchInitialValue(t *testing.T) {
-	cs := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "postgres://host/db"}))
+	cs, _ := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "postgres://host/db"}))
 	s := newTestStrategy(t, cs)
 
 	// The hotload core passes uri.Path, which has a leading slash.
@@ -105,14 +131,15 @@ func TestWatchInitialValue(t *testing.T) {
 }
 
 func TestWatchSecretNotFound(t *testing.T) {
-	s := newTestStrategy(t, fakeClientset(t))
+	cs, _ := fakeClientset(t)
+	s := newTestStrategy(t, cs)
 	if _, _, err := s.Watch(context.Background(), "/missing", "namespace=prod"); err == nil {
 		t.Fatal("expected error for missing secret")
 	}
 }
 
 func TestWatchKeyNotFound(t *testing.T) {
-	cs := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"password": "hunter2"}))
+	cs, _ := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"password": "hunter2"}))
 	s := newTestStrategy(t, cs)
 	if _, _, err := s.Watch(context.Background(), "/mydb", "namespace=prod&dsn=dsn"); err == nil {
 		t.Fatal("expected error for missing key")
@@ -121,7 +148,7 @@ func TestWatchKeyNotFound(t *testing.T) {
 
 func TestWatchDefaults(t *testing.T) {
 	// Default key is dsn.txt; default namespace outside a pod is "default".
-	cs := fakeClientset(t, makeSecret("default", "mydb", map[string]string{"dsn.txt": "postgres://host/db"}))
+	cs, _ := fakeClientset(t, makeSecret("default", "mydb", map[string]string{"dsn.txt": "postgres://host/db"}))
 	s := newTestStrategy(t, cs)
 
 	val, _, err := s.Watch(context.Background(), "/mydb", "")
@@ -134,13 +161,14 @@ func TestWatchDefaults(t *testing.T) {
 }
 
 func TestWatchSeesUpdates(t *testing.T) {
-	cs := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
+	cs, ready := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
 	s := newTestStrategy(t, cs)
 
 	_, ch, err := s.Watch(context.Background(), "/mydb", "namespace=prod&dsn=dsn")
 	if err != nil {
 		t.Fatal(err)
 	}
+	awaitWatchReady(t, ready)
 
 	updateSecret(t, cs, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-2"}))
 	awaitValue(t, ch, "dsn-2")
@@ -152,13 +180,14 @@ func TestWatchSeesUpdates(t *testing.T) {
 // TestWatchSeesDeleteAndRecreate: a deleted Secret keeps serving the last
 // value; the recreate arrives as an Added event and propagates.
 func TestWatchSeesDeleteAndRecreate(t *testing.T) {
-	cs := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
+	cs, ready := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
 	s := newTestStrategy(t, cs)
 
 	_, ch, err := s.Watch(context.Background(), "/mydb", "namespace=prod&dsn=dsn")
 	if err != nil {
 		t.Fatal(err)
 	}
+	awaitWatchReady(t, ready)
 
 	if err := cs.CoreV1().Secrets("prod").Delete(context.Background(), "mydb", metav1.DeleteOptions{}); err != nil {
 		t.Fatal(err)
@@ -211,13 +240,14 @@ func TestWatchCatchesUpAfterReconnect(t *testing.T) {
 // TestSlowSubscriberConvergesOnLatest: when a subscriber is not draining
 // its channel, intermediate values may drop but the latest must win.
 func TestSlowSubscriberConvergesOnLatest(t *testing.T) {
-	cs := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-0"}))
+	cs, ready := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-0"}))
 	s := newTestStrategy(t, cs)
 
 	_, ch, err := s.Watch(context.Background(), "/mydb", "namespace=prod&dsn=dsn")
 	if err != nil {
 		t.Fatal(err)
 	}
+	awaitWatchReady(t, ready)
 
 	// Push several updates without reading; the channel has capacity 1.
 	for i := 1; i <= 5; i++ {
@@ -230,7 +260,7 @@ func TestSlowSubscriberConvergesOnLatest(t *testing.T) {
 }
 
 func TestMultipleSubscribersOneSecret(t *testing.T) {
-	cs := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
+	cs, ready := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
 	s := newTestStrategy(t, cs)
 
 	ctx := context.Background()
@@ -242,6 +272,7 @@ func TestMultipleSubscribersOneSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	awaitWatchReady(t, ready)
 
 	updateSecret(t, cs, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-2"}))
 	awaitValue(t, ch1, "dsn-2")
@@ -251,7 +282,7 @@ func TestMultipleSubscribersOneSecret(t *testing.T) {
 // TestDistinctKeysAreIndependent: two watchers reading different data keys
 // of the same Secret must each get their own key's value.
 func TestDistinctKeysAreIndependent(t *testing.T) {
-	cs := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{
+	cs, ready := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{
 		"primary": "dsn-primary-1",
 		"replica": "dsn-replica-1",
 	}))
@@ -269,6 +300,8 @@ func TestDistinctKeysAreIndependent(t *testing.T) {
 	if vp != "dsn-primary-1" || vr != "dsn-replica-1" {
 		t.Fatalf("initial values = %q / %q, want dsn-primary-1 / dsn-replica-1", vp, vr)
 	}
+	awaitWatchReady(t, ready) // primary key watch
+	awaitWatchReady(t, ready) // replica key watch
 
 	updateSecret(t, cs, makeSecret("prod", "mydb", map[string]string{
 		"primary": "dsn-primary-2",
@@ -279,7 +312,7 @@ func TestDistinctKeysAreIndependent(t *testing.T) {
 }
 
 func TestCloseWatch(t *testing.T) {
-	cs := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
+	cs, _ := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
 	s := newTestStrategy(t, cs)
 
 	ctx := context.Background()
@@ -302,7 +335,7 @@ func TestCloseWatch(t *testing.T) {
 // TestCloseWatchKeepsOtherSubscribers: closing one subscriber leaves the
 // other one live.
 func TestCloseWatchKeepsOtherSubscribers(t *testing.T) {
-	cs := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
+	cs, ready := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
 	s := newTestStrategy(t, cs)
 
 	ctx := context.Background()
@@ -315,6 +348,7 @@ func TestCloseWatchKeepsOtherSubscribers(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	awaitWatchReady(t, ready)
 	if err := s.CloseWatch("/mydb", "namespace=prod&dsn=dsn&forceKill=true"); err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +359,7 @@ func TestCloseWatchKeepsOtherSubscribers(t *testing.T) {
 }
 
 func TestStrategyClose(t *testing.T) {
-	cs := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
+	cs, _ := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
 	s := NewStrategyWithClientset(cs)
 	s.backoff = 20 * time.Millisecond
 

@@ -19,7 +19,7 @@ import (
 // (including the leading slash the core puts on the path component), watch
 // establishment at sql.Open, and update propagation into the pool.
 func TestEndToEndThroughSQLOpen(t *testing.T) {
-	cs := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
+	cs, ready := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
 
 	// Swap the package-registered strategy instance for one bound to the
 	// fake clientset; restore a pristine instance afterwards.
@@ -54,6 +54,11 @@ func TestEndToEndThroughSQLOpen(t *testing.T) {
 		t.Fatalf("initial query routed to %q, want dsn-1", got)
 	}
 
+	// The fake clientset cannot replay events from before a watch is
+	// registered (a real API server can, via the resource version), so wait
+	// for the strategy's watch before rotating the secret.
+	awaitWatchReady(t, ready)
+
 	// Rotate the secret; the pool must converge on the new DSN.
 	if _, err := cs.CoreV1().Secrets("prod").Update(context.Background(),
 		makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-2"}), metav1.UpdateOptions{}); err != nil {
@@ -76,7 +81,7 @@ func TestEndToEndThroughSQLOpen(t *testing.T) {
 // TestSQLOpenErrorsOnMissingSecret: configuration problems surface at
 // sql.Open (the hotload core starts the watch there).
 func TestSQLOpenErrorsOnMissingSecret(t *testing.T) {
-	cs := fakeClientset(t)
+	cs, _ := fakeClientset(t)
 
 	hotload.UnregisterStrategy("k8ssecret")
 	hotload.RegisterStrategy("k8ssecret", NewStrategyWithClientset(cs))
