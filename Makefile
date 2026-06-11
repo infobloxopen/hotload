@@ -1,8 +1,9 @@
-# The repository holds three Go modules: the hotload core (.), the
-# prometheus adapter (observability), and the postgres integration tests
-# (test/integration). The committed go.work ties them together for
-# development; most targets loop over all of them.
-MODULES := . observability test/integration
+# The repository holds four Go modules: the hotload core (.), the
+# prometheus adapter (observability), the Kubernetes Secret strategy
+# (k8ssecret), and the postgres integration tests (test/integration). The
+# committed go.work ties them together for development; most targets loop
+# over all of them.
+MODULES := . k8ssecret observability test/integration
 
 .PHONY: fmt vet tidy build test generate no-diff dep-budget ci-test \
 	postgres-docker-compose-up postgres-docker-compose-down local-integration-tests
