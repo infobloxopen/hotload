@@ -1,8 +1,6 @@
 module github.com/infobloxopen/hotload
 
-go 1.23.0
-
-toolchain go1.24.6
+go 1.25.0
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.0
@@ -33,9 +31,9 @@ require (
 	github.com/prometheus/procfs v0.15.1 // indirect
 	go.uber.org/automaxprocs v1.6.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/net v0.43.0 // indirect
-	golang.org/x/sys v0.35.0 // indirect
-	golang.org/x/text v0.28.0 // indirect
-	golang.org/x/tools v0.36.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/tools v0.44.0 // indirect
 	google.golang.org/protobuf v1.36.7 // indirect
 )
