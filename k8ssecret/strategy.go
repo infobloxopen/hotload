@@ -96,15 +96,54 @@ type watchKey struct {
 	key       string
 }
 
-// secretWatch fans one watched Secret value out to its subscribers (one per
-// distinct pathQry). Subscriber channels have capacity 1 and are written
-// with drop-oldest semantics, so a subscriber always converges on the
-// latest value and a slow subscriber can never block delivery. All channel
-// sends and closes happen under Strategy.mu, so they cannot race.
+// secretWatch fans one watched Secret value out to its subscriptions.
+// Subscription channels have capacity 1 and are written with drop-oldest
+// semantics, so a subscriber always converges on the latest value and a
+// slow subscriber can never block delivery. All channel sends and closes
+// happen under Strategy.mu, so they cannot race.
 type secretWatch struct {
-	cancel  context.CancelFunc
-	value   string
-	queries map[string]chan string
+	cancel context.CancelFunc
+	value  string
+	subs   map[*subscription]struct{}
+}
+
+// subscription is one active watch handed out by Watch (it implements
+// hotload.Watchable). Closing the last subscription of a Secret value stops
+// the underlying API watch.
+type subscription struct {
+	strat     *Strategy
+	wk        watchKey
+	ch        chan string
+	closed    bool        // guarded by strat.mu
+	stopAfter func() bool // detaches the ctx-cancel hook installed by Watch
+}
+
+// Values implements hotload.Watchable.
+func (sub *subscription) Values() <-chan string {
+	return sub.ch
+}
+
+// Close implements hotload.Watchable.
+func (sub *subscription) Close() error {
+	s := sub.strat
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sub.closed {
+		return nil
+	}
+	sub.closed = true
+	sub.stopAfter()
+	close(sub.ch)
+	sw, ok := s.watches[sub.wk]
+	if !ok {
+		return nil
+	}
+	delete(sw.subs, sub)
+	if len(sw.subs) == 0 {
+		sw.cancel()
+		delete(s.watches, sub.wk)
+	}
+	return nil
 }
 
 // NewStrategy creates a strategy that builds its clientset lazily from
@@ -151,10 +190,11 @@ func parseParams(pathQry string) (namespace, key string, err error) {
 
 // Watch implements hotload.Strategy. pth is the Secret name; pathQry
 // carries the namespace and dsn parameters (see the package documentation).
-func (s *Strategy) Watch(ctx context.Context, pth string, pathQry string) (string, <-chan string, error) {
+// Every call returns an independent watch; watches on the same Secret value
+// share one underlying API watch.
+func (s *Strategy) Watch(ctx context.Context, pth string, pathQry string) (string, hotload.Watchable, error) {
 	name := secretName(pth)
-	pathQry = strings.TrimSpace(pathQry)
-	namespace, key, err := parseParams(pathQry)
+	namespace, key, err := parseParams(strings.TrimSpace(pathQry))
 	if err != nil {
 		return "", nil, err
 	}
@@ -170,7 +210,7 @@ func (s *Strategy) Watch(ctx context.Context, pth string, pathQry string) (strin
 		s.clientset = cs
 	}
 	if s.watches == nil {
-		// Re-initialize after Close.
+		// A zero-value Strategy works too.
 		s.watches = make(map[watchKey]*secretWatch)
 	}
 
@@ -188,65 +228,18 @@ func (s *Strategy) Watch(ctx context.Context, pth string, pathQry string) (strin
 
 		watchCtx, cancel := context.WithCancel(context.Background())
 		sw = &secretWatch{
-			cancel:  cancel,
-			value:   string(val),
-			queries: make(map[string]chan string),
+			cancel: cancel,
+			value:  string(val),
+			subs:   make(map[*subscription]struct{}),
 		}
 		s.watches[wk] = sw
 		go s.runWatch(watchCtx, wk)
 	}
 
-	ch, exists := sw.queries[pathQry]
-	if !exists {
-		ch = make(chan string, 1)
-		sw.queries[pathQry] = ch
-	}
-	return sw.value, ch, nil
-}
-
-// CloseWatch implements hotload.Strategy. When the last subscriber of a
-// Secret value is closed, the API watch is stopped.
-func (s *Strategy) CloseWatch(pth string, pathQry string) error {
-	name := secretName(pth)
-	pathQry = strings.TrimSpace(pathQry)
-	namespace, key, err := parseParams(pathQry)
-	if err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	wk := watchKey{namespace: namespace, name: name, key: key}
-	sw, ok := s.watches[wk]
-	if !ok {
-		return nil
-	}
-	if ch, ok := sw.queries[pathQry]; ok {
-		close(ch)
-		delete(sw.queries, pathQry)
-	}
-	if len(sw.queries) == 0 {
-		sw.cancel()
-		delete(s.watches, wk)
-	}
-	return nil
-}
-
-// Close implements hotload.Strategy: stops every watch and closes every
-// update channel.
-func (s *Strategy) Close() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for wk, sw := range s.watches {
-		sw.cancel()
-		for q, ch := range sw.queries {
-			close(ch)
-			delete(sw.queries, q)
-		}
-		delete(s.watches, wk)
-	}
-	s.watches = nil
+	sub := &subscription{strat: s, wk: wk, ch: make(chan string, 1)}
+	sw.subs[sub] = struct{}{}
+	sub.stopAfter = context.AfterFunc(ctx, func() { sub.Close() })
+	return sw.value, sub, nil
 }
 
 // runWatch maintains the API watch for one Secret value until its context
@@ -331,7 +324,7 @@ func (s *Strategy) consumeWatch(ctx context.Context, wk watchKey, rv string) err
 	}
 }
 
-// deliver pushes a changed value to every subscriber of the watch.
+// deliver pushes a changed value to every subscription of the watch.
 // Channels have capacity 1; when full, the stale queued value is dropped so
 // the subscriber always converges on the latest one (dropping the new value
 // instead would leave a slow subscriber permanently stale).
@@ -343,18 +336,18 @@ func (s *Strategy) deliver(wk watchKey, val string) {
 		return
 	}
 	sw.value = val
-	for _, ch := range sw.queries {
+	for sub := range sw.subs {
 		select {
-		case ch <- val:
+		case sub.ch <- val:
 			continue
 		default:
 		}
 		select {
-		case <-ch: // drop the stale queued value
+		case <-sub.ch: // drop the stale queued value
 		default:
 		}
 		select {
-		case ch <- val:
+		case sub.ch <- val:
 		default:
 		}
 	}

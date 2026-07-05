@@ -62,18 +62,31 @@ import (
 	"github.com/infobloxopen/hotload/v3/logger"
 )
 
-// Strategy is the plugin interface for hotload.
+// Strategy is the plugin interface for hotload: given a resource, watch it
+// and stream its values.
 type Strategy interface {
-	// Watch returns back the contents of the resource as well as a channel
-	// for subsequent updates (if the value has changed). If there is an error
-	// getting the initial value, an error is returned.
-	Watch(ctx context.Context, pth string, pathQry string) (value string, newValChan <-chan string, err error)
+	// Watch begins watching the resource identified by pth (pathQry carries
+	// the hotload DSN's encoded query parameters). It returns the resource's
+	// current value and a Watchable streaming subsequent values. Each call
+	// establishes an independent watch, even for a path and query already
+	// being watched. The watch lives until its Watchable is closed or ctx
+	// is canceled. If the current value cannot be obtained, an error is
+	// returned and nothing is watched.
+	Watch(ctx context.Context, pth string, pathQry string) (value string, watch Watchable, err error)
+}
 
-	// CloseWatch closes the specified watch.
-	CloseWatch(pth string, pathQry string) error
+// Watchable is one active watch established by Strategy.Watch. Values may
+// carry secrets — they must not be logged unredacted.
+type Watchable interface {
+	// Values returns the channel on which changed values of the watched
+	// resource are delivered. The strategy closes the channel when the
+	// watch ends.
+	Values() <-chan string
 
-	// Close resets/closes strategy, in particular closes all the update channels.
-	Close()
+	// Close releases the watch: the strategy frees the resources backing it
+	// and closes the Values channel. Close is idempotent. It must not call
+	// back into hotload (the core calls it while holding internal locks).
+	Close() error
 }
 
 const forceKillParam = "forceKill"
@@ -154,18 +167,13 @@ func RegisterStrategy(name string, strategy Strategy) {
 }
 
 // UnregisterStrategy unregisters the named driver strategy.
-// Does nothing if strategy does not exist.
-// Intended for internal unit-testing.
+// Does nothing if strategy does not exist. Watches already established
+// through the strategy are unaffected; they end when their groups close
+// them. Intended for internal unit-testing.
 func UnregisterStrategy(name string) {
 	mu.Lock()
 	defer mu.Unlock()
-	strategy, ok := strategies[name]
-	if ok {
-		if strategy != nil {
-			strategy.Close()
-		}
-		delete(strategies, name)
-	}
+	delete(strategies, name)
 }
 
 // Strategies returns a sorted list of the names of the registered
@@ -260,25 +268,25 @@ func (h *hdriver) getGroup(name string, pin bool) (*group, error) {
 			return nil, err
 		}
 
-		pathQry := queryParams.Encode()
-		value, newValChan, err := strategy.Watch(h.ctx, uri.Path, pathQry)
+		// The watch is scoped to the group's parent context: canceling it
+		// (group teardown) ends the watch even if Close were never called.
+		parentCtx, parentCancel := context.WithCancel(h.ctx)
+		value, watch, err := strategy.Watch(parentCtx, uri.Path, queryParams.Encode())
 		if err != nil {
+			parentCancel()
 			return nil, err
 		}
 
-		parentCtx, parentCancel := context.WithCancel(h.ctx)
 		g = &group{
 			name:         name,
 			strategyName: uri.Scheme,
-			strategy:     strategy,
 			path:         uri.Path,
-			pathQry:      pathQry,
 			sqlDriver:    sqlDriver,
 			forceKill:    forceKill,
 			killWindow:   killWindow,
 			parentCtx:    parentCtx,
 			parentCancel: parentCancel,
-			newValChan:   newValChan,
+			watch:        watch,
 		}
 		g.cur = newGeneration(parentCtx, value)
 		h.groups[name] = g
@@ -298,10 +306,9 @@ func (h *hdriver) getGroup(name string, pin bool) (*group, error) {
 // releaseGroup drops one connector reference and shuts the group down when
 // no references remain (unless a legacy Open pinned it). The strategy watch
 // is closed while h.mu is still held: getGroup establishes watches under
-// the same lock, so a dying group's watch is fully closed before a new
-// group with the same DSN can watch the same path — otherwise the strategy
-// could hand the new group the doomed update channel and the new group
-// would silently stop receiving config changes.
+// the same lock, so a dying group's watch has fully released its strategy
+// resources before a new group for the same DSN can establish its own.
+// This is why Watchable.Close must never call back into hotload.
 func (h *hdriver) releaseGroup(name string) {
 	h.mu.Lock()
 	g, ok := h.groups[name]

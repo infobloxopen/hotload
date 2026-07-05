@@ -12,8 +12,10 @@
 // observe which generation served a query.
 //
 // dbfake deliberately does not import the hotload package (hotload's
-// internal tests import dbfake, so an import in the other direction would be
-// a cycle). Strategy matches hotload.Strategy structurally.
+// internal tests import dbfake, so an import in the other direction would
+// be a cycle). For the same reason it contains no fake hotload.Strategy:
+// the Strategy interface names the hotload.Watchable type, so a fake
+// satisfying it must import hotload — each test package defines its own.
 package dbfake
 
 import (
@@ -426,90 +428,4 @@ func (l *CallLog) Reset() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.calls = nil
-}
-
-// Strategy is a fake hotload strategy driven by tests. It matches
-// hotload.Strategy structurally.
-type Strategy struct {
-	mu      sync.Mutex
-	initial map[string]string
-	chans   map[string]chan string
-	watches int
-}
-
-// NewStrategy returns a Strategy that answers Watch with the given initial
-// values keyed by path.
-func NewStrategy(initial map[string]string) *Strategy {
-	cp := make(map[string]string, len(initial))
-	for k, v := range initial {
-		cp[k] = v
-	}
-	return &Strategy{initial: cp, chans: make(map[string]chan string)}
-}
-
-// Push delivers a new value to the watcher of path. It blocks until the
-// hotload run loop receives it, which makes change injection deterministic.
-func (s *Strategy) Push(path, value string) {
-	s.mu.Lock()
-	ch := s.chans[path]
-	s.mu.Unlock()
-	if ch == nil {
-		panic("dbfake: Push on unwatched path " + path)
-	}
-	ch <- value
-}
-
-// CloseChan closes the update channel for path, simulating a strategy that
-// stops watching.
-func (s *Strategy) CloseChan(path string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if ch := s.chans[path]; ch != nil {
-		close(ch)
-		delete(s.chans, path)
-	}
-}
-
-// Watches reports how many watches are currently open.
-func (s *Strategy) Watches() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.watches
-}
-
-func (s *Strategy) Watch(ctx context.Context, pth string, pathQry string) (string, <-chan string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	value, ok := s.initial[pth]
-	if !ok {
-		return "", nil, fmt.Errorf("dbfake: no initial value for path %q", pth)
-	}
-	ch, ok := s.chans[pth]
-	if !ok {
-		ch = make(chan string)
-		s.chans[pth] = ch
-	}
-	s.watches++
-	return value, ch, nil
-}
-
-func (s *Strategy) CloseWatch(pth string, pathQry string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.watches--
-	if ch := s.chans[pth]; ch != nil {
-		close(ch)
-		delete(s.chans, pth)
-	}
-	return nil
-}
-
-func (s *Strategy) Close() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for p, ch := range s.chans {
-		close(ch)
-		delete(s.chans, p)
-	}
-	s.watches = 0
 }

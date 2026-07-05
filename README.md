@@ -76,28 +76,37 @@ fallback behavior exactly, so the difference is unobservable.
 
 Hotload has an interface for adding reload strategies. The interface looks like this:
 ```go
-// Strategy is the plugin interface for hotload.
+// Strategy is the plugin interface for hotload: given a resource, watch it
+// and stream its values.
 type Strategy interface {
-	// Watch returns back the contents of the resource as well as a channel
-	// for subsequent updates (if the value has changed). If there is an error
-	// getting the initial value, an error is returned.
-	Watch(ctx context.Context, pth string, pathQry string) (value string, newValChan <-chan string, err error)
+	// Watch begins watching the resource identified by pth (pathQry carries
+	// the hotload DSN's encoded query parameters). It returns the resource's
+	// current value and a Watchable streaming subsequent values. Each call
+	// establishes an independent watch. The watch lives until its Watchable
+	// is closed or ctx is canceled.
+	Watch(ctx context.Context, pth string, pathQry string) (value string, watch Watchable, err error)
+}
 
-	// CloseWatch closes the specified watch.
-	CloseWatch(pth string, pathQry string) error
+// Watchable is one active watch established by Strategy.Watch.
+type Watchable interface {
+	// Values returns the channel on which changed values of the watched
+	// resource are delivered. The strategy closes the channel when the
+	// watch ends.
+	Values() <-chan string
 
-	// Close resets/closes strategy, in particular closes all the update channels.
-	Close()
+	// Close releases the watch and closes its Values channel. Close is
+	// idempotent.
+	Close() error
 }
 ```
 
 The strategies are loaded by calling the `RegisterStrategy` method in the hotload package.
 This is the same pattern the `database/sql` package uses for loading drivers. The strategy
-implements the `Watch` method. The context passed to the strategy should be used to shut
-down any code watching the passed `pth`. `pathQry` carries the hotload connection
-string's encoded query parameters. The strategy doesn't have to use a real file to load
-the config. `pth` represents a unique string that makes sense to the strategy. For
-example, pth could point to a path in etcd or a kind/id in k8s.
+implements the `Watch` method; each watch it hands out lives until the returned `Watchable`
+is closed or the `Watch` context is canceled, whichever comes first. `pathQry` carries the
+hotload connection string's encoded query parameters. The strategy doesn't have to use a
+real file to load the config. `pth` represents a unique string that makes sense to the
+strategy. For example, pth could point to a path in etcd or a kind/id in k8s.
 
 The hotload project ships with two strategies:
 

@@ -2,8 +2,9 @@
 
 For most applications the upgrade is an import-path change. The driver name
 (`"hotload"`), the DSN format (`strategy://driver/path?forceKill=...`), the
-registration functions, the `Strategy` interface and the graceful/forceKill
-semantics are unchanged.
+registration functions and the graceful/forceKill semantics are unchanged.
+Only authors of custom strategies are affected by the reworked `Strategy`
+interface (section 5).
 
 ## 1. Import path
 
@@ -102,6 +103,39 @@ sees the new truthful method set.
 | `hotload.WithLogger` / `hotload.GetLogger` | still present (deprecated); prefer `logger.WithLogger` / `logger.GetLogger` |
 | `hotload/metrics` package | removed; see section 2 |
 | `hotload.Register` (alias mentioned in old README) | was already `RegisterSQLDriver`; unchanged |
+| `Strategy.CloseWatch` / `Strategy.Close` | removed; `Watch` returns a per-watch `Watchable` handle (see below) |
+
+**Custom strategy authors:** `Strategy` is now a single-method interface.
+`Watch` still receives `(ctx, pth, pathQry)` and still returns the current
+value synchronously, but the update channel is wrapped in a per-watch
+`Watchable` handle:
+
+```go
+type Strategy interface {
+	Watch(ctx context.Context, pth string, pathQry string) (value string, watch Watchable, err error)
+}
+
+type Watchable interface {
+	Values() <-chan string
+	Close() error
+}
+```
+
+Lifecycle rules:
+
+- Each `Watch` call establishes an independent watch with its own channel,
+  even for a path/query pair already being watched (share the underlying
+  resource watch internally if you like).
+- The watch ends when its `Watchable` is closed **or** the `Watch` context
+  is canceled; either way the strategy releases the watch's resources and
+  closes the `Values` channel. `Close` must be idempotent and must not call
+  back into hotload.
+- There is no strategy-wide `Close` anymore: a registered strategy lives for
+  the process. Tests wanting isolation construct fresh strategy instances.
+
+This removes the identity bookkeeping v1 forced on strategies: `CloseWatch`
+had to re-parse `pth`/`pathQry` to find the watch to close; now the handle
+*is* the watch.
 
 ## 6. Dependency diet
 

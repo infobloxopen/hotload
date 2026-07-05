@@ -63,13 +63,22 @@ func awaitWatchReady(t *testing.T, ready <-chan struct{}) {
 }
 
 // newTestStrategy returns a strategy on a fake clientset with a short
-// reconnect backoff, closed when the test ends.
+// reconnect backoff. Watches are tied to per-test contexts (see testCtx),
+// so cleanup happens by cancellation.
 func newTestStrategy(t *testing.T, cs kubernetes.Interface) *Strategy {
 	t.Helper()
 	s := NewStrategyWithClientset(cs)
 	s.backoff = 20 * time.Millisecond
-	t.Cleanup(s.Close)
 	return s
+}
+
+// testCtx returns a context canceled when the test ends, closing every
+// watch established with it.
+func testCtx(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	return ctx
 }
 
 func awaitValue(t *testing.T, ch <-chan string, want string) {
@@ -118,22 +127,22 @@ func TestWatchInitialValue(t *testing.T) {
 	s := newTestStrategy(t, cs)
 
 	// The hotload core passes uri.Path, which has a leading slash.
-	val, ch, err := s.Watch(context.Background(), "/mydb", "dsn=dsn&namespace=prod")
+	val, w, err := s.Watch(testCtx(t), "/mydb", "dsn=dsn&namespace=prod")
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
 	}
 	if val != "postgres://host/db" {
 		t.Errorf("initial value = %q, want postgres://host/db", val)
 	}
-	if ch == nil {
-		t.Fatal("expected non-nil channel")
+	if w == nil || w.Values() == nil {
+		t.Fatal("expected non-nil watch and channel")
 	}
 }
 
 func TestWatchSecretNotFound(t *testing.T) {
 	cs, _ := fakeClientset(t)
 	s := newTestStrategy(t, cs)
-	if _, _, err := s.Watch(context.Background(), "/missing", "namespace=prod"); err == nil {
+	if _, _, err := s.Watch(testCtx(t), "/missing", "namespace=prod"); err == nil {
 		t.Fatal("expected error for missing secret")
 	}
 }
@@ -141,7 +150,7 @@ func TestWatchSecretNotFound(t *testing.T) {
 func TestWatchKeyNotFound(t *testing.T) {
 	cs, _ := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"password": "hunter2"}))
 	s := newTestStrategy(t, cs)
-	if _, _, err := s.Watch(context.Background(), "/mydb", "namespace=prod&dsn=dsn"); err == nil {
+	if _, _, err := s.Watch(testCtx(t), "/mydb", "namespace=prod&dsn=dsn"); err == nil {
 		t.Fatal("expected error for missing key")
 	}
 }
@@ -151,7 +160,7 @@ func TestWatchDefaults(t *testing.T) {
 	cs, _ := fakeClientset(t, makeSecret("default", "mydb", map[string]string{"dsn.txt": "postgres://host/db"}))
 	s := newTestStrategy(t, cs)
 
-	val, _, err := s.Watch(context.Background(), "/mydb", "")
+	val, _, err := s.Watch(testCtx(t), "/mydb", "")
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
 	}
@@ -164,17 +173,17 @@ func TestWatchSeesUpdates(t *testing.T) {
 	cs, ready := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
 	s := newTestStrategy(t, cs)
 
-	_, ch, err := s.Watch(context.Background(), "/mydb", "namespace=prod&dsn=dsn")
+	_, w, err := s.Watch(testCtx(t), "/mydb", "namespace=prod&dsn=dsn")
 	if err != nil {
 		t.Fatal(err)
 	}
 	awaitWatchReady(t, ready)
 
 	updateSecret(t, cs, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-2"}))
-	awaitValue(t, ch, "dsn-2")
+	awaitValue(t, w.Values(), "dsn-2")
 
 	updateSecret(t, cs, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-3"}))
-	awaitValue(t, ch, "dsn-3")
+	awaitValue(t, w.Values(), "dsn-3")
 }
 
 // TestWatchSeesDeleteAndRecreate: a deleted Secret keeps serving the last
@@ -183,7 +192,7 @@ func TestWatchSeesDeleteAndRecreate(t *testing.T) {
 	cs, ready := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
 	s := newTestStrategy(t, cs)
 
-	_, ch, err := s.Watch(context.Background(), "/mydb", "namespace=prod&dsn=dsn")
+	_, w, err := s.Watch(testCtx(t), "/mydb", "namespace=prod&dsn=dsn")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +204,7 @@ func TestWatchSeesDeleteAndRecreate(t *testing.T) {
 	if _, err := cs.CoreV1().Secrets("prod").Create(context.Background(), makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-2"}), metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	awaitValue(t, ch, "dsn-2")
+	awaitValue(t, w.Values(), "dsn-2")
 }
 
 // TestWatchCatchesUpAfterReconnect: a change made while the API watch is
@@ -221,7 +230,7 @@ func TestWatchCatchesUpAfterReconnect(t *testing.T) {
 	})
 
 	s := newTestStrategy(t, cs)
-	_, ch, err := s.Watch(context.Background(), "/mydb", "namespace=prod&dsn=dsn")
+	_, w, err := s.Watch(testCtx(t), "/mydb", "namespace=prod&dsn=dsn")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +242,7 @@ func TestWatchCatchesUpAfterReconnect(t *testing.T) {
 	firstWatch.Stop()
 
 	// The reconnect's catch-up Get must deliver the missed value.
-	awaitValue(t, ch, "dsn-2")
+	awaitValue(t, w.Values(), "dsn-2")
 	<-watchCalls // and a second watch was established
 }
 
@@ -243,7 +252,7 @@ func TestSlowSubscriberConvergesOnLatest(t *testing.T) {
 	cs, ready := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-0"}))
 	s := newTestStrategy(t, cs)
 
-	_, ch, err := s.Watch(context.Background(), "/mydb", "namespace=prod&dsn=dsn")
+	_, w, err := s.Watch(testCtx(t), "/mydb", "namespace=prod&dsn=dsn")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,27 +265,30 @@ func TestSlowSubscriberConvergesOnLatest(t *testing.T) {
 	}
 	// Now drain: the last value seen must be dsn-final, not a stale one
 	// stuck in the buffer.
-	awaitValue(t, ch, "dsn-final")
+	awaitValue(t, w.Values(), "dsn-final")
 }
 
+// TestMultipleSubscribersOneSecret: watches established by separate Watch
+// calls get independent channels fed from one underlying API watch — even
+// for an identical path and query.
 func TestMultipleSubscribersOneSecret(t *testing.T) {
 	cs, ready := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
 	s := newTestStrategy(t, cs)
 
-	ctx := context.Background()
-	_, ch1, err := s.Watch(ctx, "/mydb", "namespace=prod&dsn=dsn&forceKill=true")
+	ctx := testCtx(t)
+	_, w1, err := s.Watch(ctx, "/mydb", "namespace=prod&dsn=dsn")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, ch2, err := s.Watch(ctx, "/mydb", "namespace=prod&dsn=dsn")
+	_, w2, err := s.Watch(ctx, "/mydb", "namespace=prod&dsn=dsn")
 	if err != nil {
 		t.Fatal(err)
 	}
 	awaitWatchReady(t, ready)
 
 	updateSecret(t, cs, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-2"}))
-	awaitValue(t, ch1, "dsn-2")
-	awaitValue(t, ch2, "dsn-2")
+	awaitValue(t, w1.Values(), "dsn-2")
+	awaitValue(t, w2.Values(), "dsn-2")
 }
 
 // TestDistinctKeysAreIndependent: two watchers reading different data keys
@@ -288,12 +300,12 @@ func TestDistinctKeysAreIndependent(t *testing.T) {
 	}))
 	s := newTestStrategy(t, cs)
 
-	ctx := context.Background()
-	vp, chP, err := s.Watch(ctx, "/mydb", "namespace=prod&dsn=primary")
+	ctx := testCtx(t)
+	vp, wP, err := s.Watch(ctx, "/mydb", "namespace=prod&dsn=primary")
 	if err != nil {
 		t.Fatal(err)
 	}
-	vr, chR, err := s.Watch(ctx, "/mydb", "namespace=prod&dsn=replica")
+	vr, wR, err := s.Watch(ctx, "/mydb", "namespace=prod&dsn=replica")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,80 +319,80 @@ func TestDistinctKeysAreIndependent(t *testing.T) {
 		"primary": "dsn-primary-2",
 		"replica": "dsn-replica-2",
 	}))
-	awaitValue(t, chP, "dsn-primary-2")
-	awaitValue(t, chR, "dsn-replica-2")
+	awaitValue(t, wP.Values(), "dsn-primary-2")
+	awaitValue(t, wR.Values(), "dsn-replica-2")
 }
 
-func TestCloseWatch(t *testing.T) {
+func TestCloseClosesChannel(t *testing.T) {
 	cs, _ := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
 	s := newTestStrategy(t, cs)
 
-	ctx := context.Background()
-	qry := "namespace=prod&dsn=dsn"
-	_, ch, err := s.Watch(ctx, "/mydb", qry)
+	_, w, err := s.Watch(testCtx(t), "/mydb", "namespace=prod&dsn=dsn")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CloseWatch("/mydb", qry); err != nil {
+	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	awaitClosed(t, ch)
+	awaitClosed(t, w.Values())
 
-	// Closing an unknown watch is a no-op.
-	if err := s.CloseWatch("/other", qry); err != nil {
-		t.Fatal(err)
+	// Close is idempotent.
+	if err := w.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
 	}
 }
 
-// TestCloseWatchKeepsOtherSubscribers: closing one subscriber leaves the
-// other one live.
-func TestCloseWatchKeepsOtherSubscribers(t *testing.T) {
+// TestCloseKeepsOtherSubscribers: closing one watch leaves the other one
+// live.
+func TestCloseKeepsOtherSubscribers(t *testing.T) {
 	cs, ready := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
 	s := newTestStrategy(t, cs)
 
-	ctx := context.Background()
-	_, ch1, err := s.Watch(ctx, "/mydb", "namespace=prod&dsn=dsn&forceKill=true")
+	ctx := testCtx(t)
+	_, w1, err := s.Watch(ctx, "/mydb", "namespace=prod&dsn=dsn&forceKill=true")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, ch2, err := s.Watch(ctx, "/mydb", "namespace=prod&dsn=dsn")
+	_, w2, err := s.Watch(ctx, "/mydb", "namespace=prod&dsn=dsn")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	awaitWatchReady(t, ready)
-	if err := s.CloseWatch("/mydb", "namespace=prod&dsn=dsn&forceKill=true"); err != nil {
+	if err := w1.Close(); err != nil {
 		t.Fatal(err)
 	}
-	awaitClosed(t, ch1)
+	awaitClosed(t, w1.Values())
 
 	updateSecret(t, cs, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-2"}))
-	awaitValue(t, ch2, "dsn-2")
+	awaitValue(t, w2.Values(), "dsn-2")
 }
 
-func TestStrategyClose(t *testing.T) {
+// TestCtxCancelClosesWatch: canceling the Watch context releases the watch,
+// exactly like Close; the strategy stays usable and re-establishes the API
+// watch for a subsequent Watch.
+func TestCtxCancelClosesWatch(t *testing.T) {
 	cs, _ := fakeClientset(t, makeSecret("prod", "mydb", map[string]string{"dsn": "dsn-1"}))
-	s := NewStrategyWithClientset(cs)
-	s.backoff = 20 * time.Millisecond
+	s := newTestStrategy(t, cs)
 
-	_, ch, err := s.Watch(context.Background(), "/mydb", "namespace=prod&dsn=dsn")
+	ctx, cancel := context.WithCancel(context.Background())
+	_, w, err := s.Watch(ctx, "/mydb", "namespace=prod&dsn=dsn")
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.Close()
-	awaitClosed(t, ch)
+	cancel()
+	awaitClosed(t, w.Values())
 
-	// Watch after Close re-initializes (matches the fsnotify strategy and
-	// keeps the package-registered instance usable after UnregisterStrategy
-	// + re-register cycles).
-	val, _, err := s.Watch(context.Background(), "/mydb", "namespace=prod&dsn=dsn")
+	val, w2, err := s.Watch(testCtx(t), "/mydb", "namespace=prod&dsn=dsn")
 	if err != nil {
-		t.Fatalf("Watch after Close: %v", err)
+		t.Fatalf("Watch after cancel: %v", err)
 	}
 	if val != "dsn-1" {
 		t.Errorf("value after reopen = %q, want dsn-1", val)
 	}
-	s.Close()
+	if err := w2.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestSecretName covers the path normalization between the hotload DSN and

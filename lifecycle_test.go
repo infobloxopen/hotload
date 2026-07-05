@@ -303,9 +303,9 @@ func TestGroupTeardownAndSharing(t *testing.T) {
 
 // TestReopenWhileClosing races the close of a DSN's last sql.DB against a
 // fresh sql.Open of the same DSN. Whatever the interleaving, the surviving
-// handle must keep receiving config changes: the dying group's watch
-// teardown is serialized with new watch creation, so a new group can never
-// be handed a doomed update channel.
+// handle must keep receiving config changes: every Watch call gets its own
+// update channel, and the dying group's watch teardown is serialized with
+// new watch creation under the driver lock.
 func TestReopenWhileClosing(t *testing.T) {
 	testutil.NoLeaks(t)
 	fx := newFixture(t, fxCfg{noDB: true})
