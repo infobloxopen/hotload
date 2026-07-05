@@ -9,13 +9,22 @@ import (
 )
 
 // newTestStrategy returns a strategy with a short resync period (the
-// recovery path after failed re-watches) that is closed when the test ends.
+// recovery path after failed re-watches). Watches are tied to per-test
+// contexts (see testCtx), so cleanup happens by cancellation.
 func newTestStrategy(t *testing.T) *Strategy {
 	t.Helper()
 	s := NewStrategy()
 	s.resyncPeriod = 50 * time.Millisecond
-	t.Cleanup(s.Close)
 	return s
+}
+
+// testCtx returns a context canceled when the test ends, closing every
+// watch established with it.
+func testCtx(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	return ctx
 }
 
 func writeFile(t *testing.T, path, content string) {
@@ -64,7 +73,7 @@ func awaitClosed(t *testing.T, ch <-chan string) {
 
 func TestWatchMissingFile(t *testing.T) {
 	s := newTestStrategy(t)
-	_, _, err := s.Watch(context.Background(), filepath.Join(t.TempDir(), "missing"), "")
+	_, _, err := s.Watch(testCtx(t), filepath.Join(t.TempDir(), "missing"), "")
 	if err == nil {
 		t.Fatal("expected an error watching a missing file")
 	}
@@ -75,7 +84,7 @@ func TestWatchInitialValueTrimmed(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "config")
 	writeFile(t, p, "  dsn-1 \n")
 
-	value, _, err := s.Watch(context.Background(), p, "")
+	value, _, err := s.Watch(testCtx(t), p, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,16 +98,16 @@ func TestWatchSeesWrites(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "config")
 	writeFile(t, p, "dsn-1")
 
-	_, updates, err := s.Watch(context.Background(), p, "")
+	_, w, err := s.Watch(testCtx(t), p, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	writeFile(t, p, "dsn-2")
-	awaitValue(t, updates, "dsn-2")
+	awaitValue(t, w.Values(), "dsn-2")
 
 	writeFile(t, p, "dsn-3")
-	awaitValue(t, updates, "dsn-3")
+	awaitValue(t, w.Values(), "dsn-3")
 }
 
 // TestWatchSeesAtomicRename covers the write-then-rename pattern used by
@@ -109,7 +118,7 @@ func TestWatchSeesAtomicRename(t *testing.T) {
 	p := filepath.Join(dir, "config")
 	writeFile(t, p, "dsn-1")
 
-	_, updates, err := s.Watch(context.Background(), p, "")
+	_, w, err := s.Watch(testCtx(t), p, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +128,7 @@ func TestWatchSeesAtomicRename(t *testing.T) {
 	if err := os.Rename(tmp, p); err != nil {
 		t.Fatal(err)
 	}
-	awaitValue(t, updates, "dsn-2")
+	awaitValue(t, w.Values(), "dsn-2")
 }
 
 // TestWatchRecoversFromRemoveAndRecreate: deleting the file fails the
@@ -130,7 +139,7 @@ func TestWatchRecoversFromRemoveAndRecreate(t *testing.T) {
 	p := filepath.Join(dir, "config")
 	writeFile(t, p, "dsn-1")
 
-	_, updates, err := s.Watch(context.Background(), p, "")
+	_, w, err := s.Watch(testCtx(t), p, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +149,7 @@ func TestWatchRecoversFromRemoveAndRecreate(t *testing.T) {
 	}
 	time.Sleep(20 * time.Millisecond)
 	writeFile(t, p, "dsn-2")
-	awaitValue(t, updates, "dsn-2")
+	awaitValue(t, w.Values(), "dsn-2")
 }
 
 // TestWatchSeesKubernetesConfigMapSwap reproduces the kubelet's ConfigMap
@@ -165,7 +174,7 @@ func TestWatchSeesKubernetesConfigMapSwap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	value, updates, err := s.Watch(context.Background(), p, "")
+	value, w, err := s.Watch(testCtx(t), p, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,156 +201,136 @@ func TestWatchSeesKubernetesConfigMapSwap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	awaitValue(t, updates, "dsn-2")
+	awaitValue(t, w.Values(), "dsn-2")
 }
 
-// TestMultipleWatchersOnePath: watchers with different query strings get
-// independent channels fed from one underlying file watch.
+// TestMultipleWatchersOnePath: watches established by separate Watch calls
+// get independent channels fed from one underlying file watch — even for an
+// identical path and query (two hotload DSNs can differ only in the driver
+// component).
 func TestMultipleWatchersOnePath(t *testing.T) {
 	s := newTestStrategy(t)
 	p := filepath.Join(t.TempDir(), "config")
 	writeFile(t, p, "dsn-1")
 
-	ctx := context.Background()
-	_, ch1, err := s.Watch(ctx, p, "forceKill=true")
+	ctx := testCtx(t)
+	_, w1, err := s.Watch(ctx, p, "forceKill=true")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, ch2, err := s.Watch(ctx, p, "")
+	_, w2, err := s.Watch(ctx, p, "forceKill=true")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	writeFile(t, p, "dsn-2")
-	awaitValue(t, ch1, "dsn-2")
-	awaitValue(t, ch2, "dsn-2")
+	awaitValue(t, w1.Values(), "dsn-2")
+	awaitValue(t, w2.Values(), "dsn-2")
 }
 
-// TestWatchSamePathAndQueryShared: the same path+query pair returns the
-// same channel rather than a second watch.
-func TestWatchSamePathAndQueryShared(t *testing.T) {
+func TestCloseClosesChannel(t *testing.T) {
 	s := newTestStrategy(t)
 	p := filepath.Join(t.TempDir(), "config")
 	writeFile(t, p, "dsn-1")
 
-	ctx := context.Background()
-	_, ch1, err := s.Watch(ctx, p, "q=1")
+	_, w, err := s.Watch(testCtx(t), p, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, ch2, err := s.Watch(ctx, p, "q=1")
-	if err != nil {
+	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if ch1 != ch2 {
-		t.Error("same path+query should share one update channel")
+	awaitClosed(t, w.Values())
+
+	// Close is idempotent.
+	if err := w.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
 	}
 }
 
-func TestCloseWatchClosesChannel(t *testing.T) {
+// TestCloseKeepsOtherWatches: closing one watch leaves the other subscriber
+// of the same path working.
+func TestCloseKeepsOtherWatches(t *testing.T) {
 	s := newTestStrategy(t)
 	p := filepath.Join(t.TempDir(), "config")
 	writeFile(t, p, "dsn-1")
 
-	_, updates, err := s.Watch(context.Background(), p, "")
+	ctx := testCtx(t)
+	_, w1, err := s.Watch(ctx, p, "q=1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CloseWatch(p, ""); err != nil {
-		t.Fatal(err)
-	}
-	awaitClosed(t, updates)
-}
-
-// TestCloseWatchKeepsOtherQueries: closing one query watch leaves the other
-// subscriber of the same path working.
-func TestCloseWatchKeepsOtherQueries(t *testing.T) {
-	s := newTestStrategy(t)
-	p := filepath.Join(t.TempDir(), "config")
-	writeFile(t, p, "dsn-1")
-
-	ctx := context.Background()
-	_, ch1, err := s.Watch(ctx, p, "q=1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, ch2, err := s.Watch(ctx, p, "q=2")
+	_, w2, err := s.Watch(ctx, p, "q=2")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := s.CloseWatch(p, "q=1"); err != nil {
+	if err := w1.Close(); err != nil {
 		t.Fatal(err)
 	}
-	awaitClosed(t, ch1)
+	awaitClosed(t, w1.Values())
 
 	writeFile(t, p, "dsn-2")
-	awaitValue(t, ch2, "dsn-2")
+	awaitValue(t, w2.Values(), "dsn-2")
 }
 
-func TestStrategyCloseClosesAllChannels(t *testing.T) {
-	s := newTestStrategy(t)
-	dir := t.TempDir()
-	p1 := filepath.Join(dir, "a")
-	p2 := filepath.Join(dir, "b")
-	writeFile(t, p1, "dsn-a")
-	writeFile(t, p2, "dsn-b")
-
-	ctx := context.Background()
-	_, ch1, err := s.Watch(ctx, p1, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, ch2, err := s.Watch(ctx, p2, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	s.Close()
-	awaitClosed(t, ch1)
-	awaitClosed(t, ch2)
-}
-
-// TestWatchAfterClose: the strategy re-initializes itself after Close (the
-// registered global instance must survive UnregisterStrategy+re-register
-// cycles).
-func TestWatchAfterClose(t *testing.T) {
+// TestCtxCancelClosesWatch: canceling the Watch context releases the watch,
+// exactly like Close.
+func TestCtxCancelClosesWatch(t *testing.T) {
 	s := newTestStrategy(t)
 	p := filepath.Join(t.TempDir(), "config")
 	writeFile(t, p, "dsn-1")
 
-	ctx := context.Background()
-	_, _, err := s.Watch(ctx, p, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	_, w, err := s.Watch(ctx, p, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.Close()
+	cancel()
+	awaitClosed(t, w.Values())
+}
 
-	value, updates, err := s.Watch(ctx, p, "")
+// TestWatchAfterAllClosed: closing the last watch releases the internal
+// watcher; a later Watch must re-initialize it (the registered global
+// instance lives for the process).
+func TestWatchAfterAllClosed(t *testing.T) {
+	s := newTestStrategy(t)
+	p := filepath.Join(t.TempDir(), "config")
+	writeFile(t, p, "dsn-1")
+
+	_, w, err := s.Watch(testCtx(t), p, "")
 	if err != nil {
-		t.Fatalf("Watch after Close: %v", err)
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	value, w2, err := s.Watch(testCtx(t), p, "")
+	if err != nil {
+		t.Fatalf("Watch after last Close: %v", err)
 	}
 	if value != "dsn-1" {
 		t.Errorf("value = %q, want dsn-1", value)
 	}
 	writeFile(t, p, "dsn-2")
-	awaitValue(t, updates, "dsn-2")
+	awaitValue(t, w2.Values(), "dsn-2")
 }
 
 // TestAbandonedSubscriberDoesNotWedgeStrategy: if a subscriber stops
 // receiving (its hotload group is gone), pending updates must not block the
-// strategy's delivery or its CloseWatch path.
+// strategy's delivery or the watch's Close path.
 func TestAbandonedSubscriberDoesNotWedgeStrategy(t *testing.T) {
 	s := newTestStrategy(t)
 	p := filepath.Join(t.TempDir(), "config")
 	writeFile(t, p, "dsn-1")
 
-	ctx := context.Background()
+	ctx := testCtx(t)
 	_, abandoned, err := s.Watch(ctx, p, "q=abandoned")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = abandoned // never read from
+	// abandoned is never read from.
 
 	_, live, err := s.Watch(ctx, p, "q=live")
 	if err != nil {
@@ -353,20 +342,20 @@ func TestAbandonedSubscriberDoesNotWedgeStrategy(t *testing.T) {
 		writeFile(t, p, "dsn-x")
 		writeFile(t, p, "dsn-2")
 	}
-	awaitValue(t, live, "dsn-2")
+	awaitValue(t, live.Values(), "dsn-2")
 
 	// Closing the abandoned watch must not deadlock.
 	doneCh := make(chan struct{})
 	go func() {
 		defer close(doneCh)
-		if err := s.CloseWatch(p, "q=abandoned"); err != nil {
-			t.Errorf("CloseWatch: %v", err)
+		if err := abandoned.Close(); err != nil {
+			t.Errorf("Close: %v", err)
 		}
 	}()
 	select {
 	case <-doneCh:
 	case <-time.After(5 * time.Second):
-		t.Fatal("CloseWatch deadlocked on an abandoned subscriber")
+		t.Fatal("Close deadlocked on an abandoned subscriber")
 	}
-	awaitClosed(t, abandoned)
+	awaitClosed(t, abandoned.Values())
 }

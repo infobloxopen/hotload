@@ -46,25 +46,27 @@ type update struct {
 	redactDsn string
 }
 
-// queryWatch fans one path's updates out to one subscriber (the hotload
-// group watching pth+pathQry). Its opLoop goroutine is the only writer of
-// updateChan: it forwards queued updates and closes the channel when
-// operChan closes, so channel operations never race. done is closed (under
-// the strategy lock) when the watch is closed, unblocking an opLoop stuck
-// sending to a subscriber that stopped receiving.
+// queryWatch is one active watch handed out by Watch (it implements
+// hotload.Watchable). It fans one path's updates out to one subscriber. Its
+// opLoop goroutine is the only writer of updateChan: it forwards queued
+// updates and closes the channel when operChan closes, so channel
+// operations never race. done is closed (under the strategy lock) when the
+// watch is closed, unblocking an opLoop stuck sending to a subscriber that
+// stopped receiving.
 type queryWatch struct {
 	parentPathW *pathWatch
-	pathQuery   string
+	pathQuery   string // for logging only
 	updateChan  chan string
 	operChan    chan update
 	done        chan struct{}
+	stopAfter   func() bool // detaches the ctx-cancel hook installed by Watch
 }
 
 type pathWatch struct {
 	parentStrat *Strategy
 	watchPath   string
 	value       string
-	queries     map[string]*queryWatch
+	queries     map[*queryWatch]struct{}
 }
 
 func (s *Strategy) readConfigFile(path string) (v []byte, err error) {
@@ -169,7 +171,7 @@ func (s *Strategy) setVal(pth string, val string) {
 	}
 	pathW.value = val
 	redactDsn := internal.RedactUrl(val)
-	for _, qryW := range pathW.queries {
+	for qryW := range pathW.queries {
 		qryW.enqueue(update{dsn: val, redactDsn: redactDsn})
 	}
 }
@@ -198,13 +200,14 @@ func (qw *queryWatch) enqueue(up update) {
 	}
 }
 
-// Watch implements the hotload.Strategy interface.
-func (s *Strategy) Watch(ctx context.Context, pth string, pathQry string) (value string, values <-chan string, err error) {
+// Watch implements the hotload.Strategy interface. Every call returns an
+// independent watch; watches on the same path share one underlying file
+// watch.
+func (s *Strategy) Watch(ctx context.Context, pth string, pathQry string) (string, hotload.Watchable, error) {
 	pth = path.Clean(pth)
 	pathQry = strings.TrimSpace(pathQry)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Re-initialize after Close (which nils the maps out).
 	if s.paths == nil {
 		s.paths = make(map[string]*pathWatch)
 	}
@@ -223,93 +226,86 @@ func (s *Strategy) Watch(ctx context.Context, pth string, pathQry string) (value
 	} else {
 		s.logf("fsnotify.Watch", "new path to be watched: '%s'", pth)
 		if err := s.watcher.Add(pth); err != nil {
+			s.closeWatcherIfIdle()
 			return "", nil, err
 		}
 		bs, err := s.readConfigFile(pth)
 		if err != nil {
 			s.watcher.Remove(pth)
+			s.closeWatcherIfIdle()
 			return "", nil, err
 		}
 		pathW = &pathWatch{
 			parentStrat: s,
 			watchPath:   pth,
 			value:       string(bs),
-			queries:     make(map[string]*queryWatch),
+			queries:     make(map[*queryWatch]struct{}),
 		}
 		s.paths[pth] = pathW
 	}
 
-	qryW, found := pathW.queries[pathQry]
-	if found {
-		qryW.logf("fsnotify.Watch", "query already being watched")
+	qryW := &queryWatch{
+		parentPathW: pathW,
+		pathQuery:   pathQry,
+		updateChan:  make(chan string),
+		operChan:    make(chan update, 30),
+		done:        make(chan struct{}),
+	}
+	pathW.queries[qryW] = struct{}{}
+	go qryW.opLoop()
+	qryW.stopAfter = context.AfterFunc(ctx, func() { qryW.Close() })
+	qryW.logf("fsnotify.Watch", "new watch")
+
+	return pathW.value, qryW, nil
+}
+
+// Values implements hotload.Watchable.
+func (qw *queryWatch) Values() <-chan string {
+	return qw.updateChan
+}
+
+// Close implements hotload.Watchable. The update channel is closed
+// (asynchronously, by the watch's delivery goroutine); closing the last
+// watch on a path removes the path from the file watcher, and closing the
+// last watch on the strategy closes the underlying watcher.
+func (qw *queryWatch) Close() error {
+	pathW := qw.parentPathW
+	s := pathW.parentStrat
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-qw.done:
+		return nil // already closed
+	default:
+	}
+	qw.stopAfter()
+	qw.shutdown()
+	delete(pathW.queries, qw)
+	qw.logf("fsnotify.Close", "closed watch")
+
+	if len(pathW.queries) > 0 {
+		return nil
+	}
+	delete(s.paths, pathW.watchPath)
+	var err error
+	if err = s.watcher.Remove(pathW.watchPath); err != nil {
+		s.errlogf("fsnotify.Close", "failed to remove '%s' from watcher, err=%v", pathW.watchPath, err)
 	} else {
-		pathW.logf("fsnotify.Watch", "new query to be watched: '%s'", pathQry)
-		qryW = &queryWatch{
-			parentPathW: pathW,
-			pathQuery:   pathQry,
-			updateChan:  make(chan string),
-			operChan:    make(chan update, 30),
-			done:        make(chan struct{}),
-		}
-		pathW.queries[pathQry] = qryW
-		go qryW.opLoop()
+		s.logf("fsnotify.Close", "removed path from being watched '%s'", pathW.watchPath)
 	}
-
-	return pathW.value, qryW.updateChan, nil
+	s.closeWatcherIfIdle()
+	return err
 }
 
-// CloseWatch implements the hotload.Strategy interface.
-// Closes the specified watch; its update channel is closed (asynchronously,
-// by the watch's delivery goroutine) and, if this was the last watch on the
-// path, the path is removed from the file watcher.
-func (s *Strategy) CloseWatch(pth string, pathQry string) error {
-	pth = path.Clean(pth)
-	pathQry = strings.TrimSpace(pathQry)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	pathW, found := s.paths[pth]
-	if !found {
-		return nil
-	}
-	qryW, found := pathW.queries[pathQry]
-	if !found {
-		return nil
-	}
-
-	delete(pathW.queries, pathQry)
-	qryW.shutdown()
-	qryW.logf("fsnotify.CloseWatch", "closed watch")
-
-	if len(pathW.queries) == 0 {
-		delete(s.paths, pth)
-		if err := s.watcher.Remove(pth); err != nil {
-			s.errlogf("fsnotify.CloseWatch", "failed to remove '%s' from watcher, err=%v", pth, err)
-			return err
-		}
-		s.logf("fsnotify.CloseWatch", "removed path from being watched '%s'", pth)
-	}
-	return nil
-}
-
-// Close implements the hotload.Strategy interface.
-// Closes this strategy by closing the internal watcher
-// and closing all the update channels.
-func (s *Strategy) Close() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.watcher != nil {
+// closeWatcherIfIdle closes the internal watcher when no paths remain
+// watched, so an idle strategy holds no OS resources; the next Watch
+// re-initializes it. Callers must hold the strategy lock.
+func (s *Strategy) closeWatcherIfIdle() {
+	if len(s.paths) == 0 && s.watcher != nil {
 		s.watcher.Close()
-		s.logf("fsnotify.Close", "closed internal watcher")
 		s.watcher = nil
+		s.logf("fsnotify", "no paths watched; closed internal watcher")
 	}
-	for _, pathW := range s.paths {
-		for _, qryW := range pathW.queries {
-			qryW.shutdown()
-			qryW.logf("fsnotify.Close", "closed watch")
-		}
-		pathW.queries = nil
-	}
-	s.paths = nil
 }
 
 // shutdown stops the watch's delivery goroutine. Callers must hold the

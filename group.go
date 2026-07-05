@@ -128,15 +128,13 @@ func (gen *generation) awaitIdle(window time.Duration) {
 type group struct {
 	name         string // the full hotload DSN
 	strategyName string
-	strategy     Strategy
 	path         string
-	pathQry      string
 	sqlDriver    *driverInstance
 	forceKill    bool
 	killWindow   time.Duration
 	parentCtx    context.Context
 	parentCancel context.CancelFunc
-	newValChan   <-chan string
+	watch        Watchable
 
 	// refs and pinned are guarded by hdriver.mu. refs counts live
 	// connectors; pinned marks groups created through the legacy
@@ -154,12 +152,13 @@ type group struct {
 // group is shut down or the strategy closes the channel. It is the only
 // goroutine that swaps generations.
 func (g *group) runLoop() {
+	updates := g.watch.Values()
 	for {
 		select {
 		case <-g.parentCtx.Done():
 			g.logf("group.runLoop", "parent context done, terminating")
 			return
-		case newValue, ok := <-g.newValChan:
+		case newValue, ok := <-updates:
 			if !ok {
 				g.logf("group.runLoop", "strategy channel closed, terminating")
 				EmitWatchEvent(WatchEvent{GroupName: g.name, Strategy: g.strategyName, Path: g.path, Closed: true})
@@ -268,11 +267,10 @@ func (g *group) dial(ctx context.Context, gen *generation, dsn string) (driver.C
 	return gen.connector.Connect(ctx)
 }
 
-// closeWatch marks the group closed and stops its strategy watch. It is
+// closeWatch marks the group closed and closes its strategy watch. It is
 // called by hdriver.releaseGroup with hdriver.mu held, which serializes it
-// against getGroup's strategy.Watch calls (see releaseGroup). Strategy
-// implementations must therefore never call back into hotload from
-// CloseWatch.
+// against getGroup's strategy.Watch calls (see releaseGroup). Watchable
+// implementations must therefore never call back into hotload from Close.
 func (g *group) closeWatch() {
 	g.mu.Lock()
 	if g.closed {
@@ -282,8 +280,8 @@ func (g *group) closeWatch() {
 	g.closed = true
 	g.mu.Unlock()
 
-	if err := g.strategy.CloseWatch(g.path, g.pathQry); err != nil {
-		g.logf("group.closeWatch", "CloseWatch error: %v", err)
+	if err := g.watch.Close(); err != nil {
+		g.logf("group.closeWatch", "watch close error: %v", err)
 	}
 }
 

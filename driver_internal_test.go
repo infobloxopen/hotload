@@ -5,11 +5,61 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"net/url"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/infobloxopen/hotload/v3/internal/dbfake"
 )
+
+// testStrategy is a minimal in-package fake Strategy. The richer fake in
+// the external test package cannot be used here (it imports hotload), and
+// dbfake cannot host one (the Strategy interface names hotload.Watchable).
+type testStrategy struct {
+	mu      sync.Mutex
+	initial map[string]string
+	watches int
+}
+
+func newTestStrategy(initial map[string]string) *testStrategy {
+	return &testStrategy{initial: initial}
+}
+
+func (s *testStrategy) Watch(ctx context.Context, pth string, pathQry string) (string, Watchable, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value, ok := s.initial[pth]
+	if !ok {
+		return "", nil, fmt.Errorf("testStrategy: no initial value for path %q", pth)
+	}
+	s.watches++
+	return value, &testWatch{strat: s, ch: make(chan string)}, nil
+}
+
+func (s *testStrategy) Watches() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.watches
+}
+
+type testWatch struct {
+	strat  *testStrategy
+	ch     chan string
+	closed bool // guarded by strat.mu
+}
+
+func (w *testWatch) Values() <-chan string { return w.ch }
+
+func (w *testWatch) Close() error {
+	w.strat.mu.Lock()
+	defer w.strat.mu.Unlock()
+	if !w.closed {
+		w.closed = true
+		close(w.ch)
+		w.strat.watches--
+	}
+	return nil
+}
 
 func Test_mergeConnStringOptions(t *testing.T) {
 	tests := []struct {
@@ -132,7 +182,7 @@ func TestRegisterPanics(t *testing.T) {
 	})
 	mustPanic("nil strategy", func() { RegisterStrategy("internal-test-nilstrat", nil) })
 	mustPanic("dup strategy", func() {
-		s := dbfake.NewStrategy(nil)
+		s := newTestStrategy(nil)
 		RegisterStrategy("internal-test-dupstrat", s)
 		defer UnregisterStrategy("internal-test-dupstrat")
 		RegisterStrategy("internal-test-dupstrat", s)
@@ -142,7 +192,7 @@ func TestRegisterPanics(t *testing.T) {
 func TestRegistryLists(t *testing.T) {
 	RegisterSQLDriver("internal-test-list-b", &dbfake.Driver{})
 	RegisterSQLDriver("internal-test-list-a", &dbfake.Driver{})
-	RegisterStrategy("internal-test-list-strat", dbfake.NewStrategy(nil))
+	RegisterStrategy("internal-test-list-strat", newTestStrategy(nil))
 	defer UnregisterStrategy("internal-test-list-strat")
 
 	drivers := SQLDrivers()
@@ -182,7 +232,7 @@ func TestLegacyOpenPath(t *testing.T) {
 
 	h := newHdriver(ctx)
 	drv := &dbfake.Driver{Caps: dbfake.CapsModern}
-	strat := dbfake.NewStrategy(map[string]string{"/cfg": "dsn-1"})
+	strat := newTestStrategy(map[string]string{"/cfg": "dsn-1"})
 	RegisterSQLDriver("internal-test-legacy-drv", drv)
 	RegisterStrategy("internal-test-legacy-strat", strat)
 	defer UnregisterStrategy("internal-test-legacy-strat")

@@ -33,7 +33,7 @@ type fixture struct {
 	t       *testing.T
 	db      *sql.DB
 	drv     *dbfake.Driver
-	strat   *dbfake.Strategy
+	strat   *fakeStrategy
 	dsn     string // the hotload DSN
 	changes chan hotload.ConfigChangeEvent
 }
@@ -61,7 +61,7 @@ func newFixture(t *testing.T, cfg fxCfg) *fixture {
 	fx := &fixture{
 		t:       t,
 		drv:     &dbfake.Driver{Caps: caps, ExecFn: cfg.execFn, QueryFn: cfg.queryFn},
-		strat:   dbfake.NewStrategy(map[string]string{fixturePath: initial}),
+		strat:   newFakeStrategy(map[string]string{fixturePath: initial}),
 		changes: make(chan hotload.ConfigChangeEvent, 100),
 	}
 
