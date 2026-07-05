@@ -5,11 +5,13 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/infobloxopen/hotload/v3/internal/dbfake"
+	"github.com/infobloxopen/hotload/v3/logger"
 )
 
 // testStrategy is a minimal in-package fake Strategy. The richer fake in
@@ -256,6 +258,72 @@ func TestLegacyOpenPath(t *testing.T) {
 	defer conn2.Close()
 	if n := strat.Watches(); n != 1 {
 		t.Errorf("watches = %d, want 1", n)
+	}
+}
+
+// TestNoHooksNotice: creating the first group on a driver with no hooks
+// registered logs a one-time notice pointing at the observability module
+// (v1 exported prometheus metrics as an import side effect; without the
+// notice a ported service loses them silently). With hooks registered,
+// nothing is logged.
+func TestNoHooksNotice(t *testing.T) {
+	resetHooks()
+	defer resetHooks()
+
+	var mu sync.Mutex
+	notices := 0
+	logger.WithErrLogger(func(args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		if strings.Contains(fmt.Sprint(args...), "no hooks registered") {
+			notices++
+		}
+	})
+	defer logger.WithErrLogger(nil)
+	count := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return notices
+	}
+
+	RegisterSQLDriver("internal-test-notice-drv", &dbfake.Driver{Caps: dbfake.CapsModern})
+	RegisterStrategy("internal-test-notice-strat", newTestStrategy(map[string]string{"/cfg": "dsn-1"}))
+	defer UnregisterStrategy("internal-test-notice-strat")
+	base := "internal-test-notice-strat://internal-test-notice-drv/cfg"
+
+	// Cancelable driver contexts: legacy Open pins groups, so their run
+	// loops must be terminated via the parent context or they trip the
+	// goroutine-leak checks of later tests.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	h := newHdriver(ctx)
+	conn, err := h.Open(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn2, err := h.Open(base + "?forceKill=true") // second group, same driver
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn2.Close()
+
+	if got := count(); got != 1 {
+		t.Errorf("notices = %d, want exactly 1 per driver", got)
+	}
+
+	// With hooks registered, a fresh driver stays quiet.
+	RegisterHooks(Hooks{OnConfigChange: func(ConfigChangeEvent) {}})
+	h2 := newHdriver(ctx)
+	conn3, err := h2.Open(base + "?killWindow=200ms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn3.Close()
+
+	if got := count(); got != 1 {
+		t.Errorf("notices after hooks registered = %d, want still 1", got)
 	}
 }
 

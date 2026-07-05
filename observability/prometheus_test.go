@@ -93,3 +93,18 @@ func TestEnablePrometheus(t *testing.T) {
 		t.Error("second EnablePrometheus on same registry should error")
 	}
 }
+
+// TestEnablePrometheusDefaultIdempotent: hotload v1 enabled metrics as an
+// import side effect, so migrated code may enable defensively in more than
+// one place; with the default registerer the second call must return the
+// same collectors instead of a duplicate-registration panic.
+func TestEnablePrometheusDefaultIdempotent(t *testing.T) {
+	c1 := MustEnablePrometheus(nil)
+	c2 := MustEnablePrometheus(nil)
+	if c1 != c2 {
+		t.Error("second MustEnablePrometheus(nil) returned different collectors")
+	}
+	if c3 := MustEnablePrometheus(prometheus.DefaultRegisterer); c3 != c1 {
+		t.Error("MustEnablePrometheus(DefaultRegisterer) should take the idempotent default path")
+	}
+}

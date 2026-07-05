@@ -11,9 +11,14 @@
 //	    observability.MustEnablePrometheus(nil) // nil = prometheus.DefaultRegisterer
 //	    ...
 //	}
+//
+// With a nil registerer the call is idempotent, so a library and its caller
+// can both enable metrics without coordinating.
 package observability
 
 import (
+	"sync"
+
 	"github.com/prometheus/client_golang/prometheus"
 
 	hotload "github.com/infobloxopen/hotload/v3"
@@ -126,14 +131,42 @@ func (c *Collectors) Hooks() hotload.Hooks {
 	}
 }
 
-// EnablePrometheus creates the collectors, registers them with reg (the
-// default prometheus registerer when reg is nil), and registers the hooks
-// that feed them with hotload. Call it once during program initialization,
-// before opening hotload connections.
+// defaultMu guards the idempotent default-registerer path of
+// EnablePrometheus; defaultCollectors holds its result.
+var (
+	defaultMu         sync.Mutex
+	defaultCollectors *Collectors
+)
+
+// EnablePrometheus creates the collectors, registers them with reg, and
+// registers the hooks that feed them with hotload. Call it during program
+// initialization, before opening hotload connections.
+//
+// When reg is nil (or prometheus.DefaultRegisterer) the call is idempotent:
+// the first call registers collectors and hooks with the default registerer
+// and later calls return that same *Collectors — so an application and a
+// library it uses can both enable hotload metrics defensively without
+// tripping duplicate-registration errors. Calls with any other registerer
+// create and register fresh collectors every time; managing their lifetime
+// is the caller's job (this is the path tests use with throwaway
+// registries).
 func EnablePrometheus(reg prometheus.Registerer) (*Collectors, error) {
-	if reg == nil {
-		reg = prometheus.DefaultRegisterer
+	if reg != nil && reg != prometheus.DefaultRegisterer {
+		return enablePrometheus(reg)
 	}
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+	if defaultCollectors == nil {
+		c, err := enablePrometheus(prometheus.DefaultRegisterer)
+		if err != nil {
+			return nil, err
+		}
+		defaultCollectors = c
+	}
+	return defaultCollectors, nil
+}
+
+func enablePrometheus(reg prometheus.Registerer) (*Collectors, error) {
 	c := NewCollectors()
 	for _, collector := range c.All() {
 		if err := reg.Register(collector); err != nil {
