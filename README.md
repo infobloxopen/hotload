@@ -9,7 +9,18 @@ to the real database driver. When config changes
 are detected it retires connections in a manner that causes the `database/sql`
 package to create new connections with the new connection parameters.
 
-Upgrading from hotload v1? See [MIGRATION.md](MIGRATION.md).
+## Versions and branches
+
+| Branch | Module path | Status |
+|---|---|---|
+| [`main`](https://github.com/infobloxopen/hotload/tree/main) | `github.com/infobloxopen/hotload/v3` | current — all new development |
+| [`release-1.x`](https://github.com/infobloxopen/hotload/tree/release-1.x) | `github.com/infobloxopen/hotload` | maintenance — security and critical fixes only |
+
+Existing v1 imports keep working: the un-suffixed module path always resolves
+to the newest `v1.x` tag, and `go get -u` never moves a v1 consumer onto v3.
+Upgrading to v3 is an explicit import-path change — see
+[MIGRATION.md](MIGRATION.md). File v1 fixes as PRs against `release-1.x`;
+they are released as `v1.7.x` tags from that branch.
 
 ```go
 import (

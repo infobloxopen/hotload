@@ -78,9 +78,10 @@ func NewPathChksumCollector(hasher FileHasher) *PathChksumCollector {
 	}
 }
 
-// AddPath starts reporting the checksum timestamp of pathStr. Duplicate adds
-// are ignored. Fed automatically from hotload's watch events when the
-// collector is wired through Collectors.Hooks.
+// AddPath starts reporting the checksum timestamp of pathStr, which must be
+// a local file path. Duplicate adds are ignored. Fed automatically for
+// fsnotify watches when the collector is wired through Collectors.Hooks;
+// custom file-backed strategies should call it directly.
 func (p *PathChksumCollector) AddPath(pathStr string) {
 	if !p.enabled {
 		return

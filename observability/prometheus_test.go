@@ -94,6 +94,32 @@ func TestEnablePrometheus(t *testing.T) {
 	}
 }
 
+// TestPathChksumOnlyFsnotify: watch events register chksum paths only for
+// the fsnotify strategy — other strategies' paths (Secret names, etcd keys)
+// are not local files and must not be hashed at scrape time.
+func TestPathChksumOnlyFsnotify(t *testing.T) {
+	t.Setenv(PathChksumMetricsEnableEnvVar, "true")
+	c := NewCollectors()
+	h := c.Hooks()
+
+	h.OnWatch(hotload.WatchEvent{Strategy: "fsnotify", Path: "/etc/dsn"})
+	h.OnWatch(hotload.WatchEvent{Strategy: "k8ssecret", Path: "/mydb"})
+	h.OnWatch(hotload.WatchEvent{Strategy: "fsnotify", Path: "/etc/other", Closed: true})
+
+	col := c.HotloadPathChksumTimestampSeconds
+	col.mu.Lock()
+	defer col.mu.Unlock()
+	if _, ok := col.paths["/etc/dsn"]; !ok {
+		t.Error("fsnotify watch path not registered for chksum")
+	}
+	if _, ok := col.paths["/mydb"]; ok {
+		t.Error("k8ssecret path must not be registered for chksum")
+	}
+	if _, ok := col.paths["/etc/other"]; ok {
+		t.Error("closed watch event must not register a path")
+	}
+}
+
 // TestEnablePrometheusDefaultIdempotent: hotload v1 enabled metrics as an
 // import side effect, so migrated code may enable defensively in more than
 // one place; with the default registerer the second call must return the
