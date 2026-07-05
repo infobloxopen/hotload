@@ -1,7 +1,23 @@
 # Releasing
 
-This repository contains two released modules with independent tag
-namespaces, plus an internal test module that is never released:
+## Branches and tag lines
+
+| Branch | Module path | Tags cut from it |
+|---|---|---|
+| `main` | `github.com/infobloxopen/hotload/v3` (+ satellite modules) | `v3.Y.Z`, `observability/vA.B.C`, `k8ssecret/vA.B.C` |
+| `release-1.x` | `github.com/infobloxopen/hotload` | `v1.7.Z` (maintenance: security and critical fixes only) |
+
+The un-suffixed module path resolves only `v1.x` tags, so v1 consumers are
+never pulled onto v3 by `go get -u`; every `v1.7.Z` tag must point at a
+`release-1.x` commit. Both branches are protected with linear history —
+land changes by rebase or squash, never a merge commit. The required status
+check on both branches is named `build`; renaming that CI job breaks branch
+protection.
+
+## Modules on main
+
+`main` contains two released modules with independent tag namespaces, plus
+an internal test module that is never released:
 
 | Module | Tag format | Example |
 |---|---|---|
