@@ -90,6 +90,13 @@ func resetHooks() {
 	hooks = nil
 }
 
+// hooksRegistered reports whether any hooks have been registered.
+func hooksRegistered() bool {
+	hooksMu.RLock()
+	defer hooksMu.RUnlock()
+	return len(hooks) != 0
+}
+
 func snapshotHooks() []Hooks {
 	hooksMu.RLock()
 	defer hooksMu.RUnlock()

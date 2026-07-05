@@ -205,6 +205,9 @@ type hdriver struct {
 	ctx    context.Context
 	mu     sync.Mutex
 	groups map[string]*group
+
+	// hooksNote emits the one-time no-hooks notice (see warnIfNoHooks).
+	hooksNote sync.Once
 }
 
 var (
@@ -290,6 +293,7 @@ func (h *hdriver) getGroup(name string, pin bool) (*group, error) {
 		}
 		g.cur = newGeneration(parentCtx, value)
 		h.groups[name] = g
+		h.hooksNote.Do(warnIfNoHooks)
 		h.logf("hotload", "new group: '%s'", name)
 		EmitWatchEvent(WatchEvent{GroupName: name, Strategy: uri.Scheme, Path: uri.Path})
 		go g.runLoop()
@@ -326,6 +330,21 @@ func (h *hdriver) releaseGroup(name string) {
 	if g != nil {
 		g.finishShutdown()
 	}
+}
+
+// warnIfNoHooks logs a one-time notice when the first watch starts with no
+// hooks registered. Hotload v1 exported prometheus metrics as an import
+// side effect; a v3 consumer that ports the import paths and nothing else
+// would lose those metrics with no other signal. The notice goes to the
+// error logger because, unlike the info logger, it is visible by default;
+// silence it by registering hooks (e.g. the observability module) or via
+// logger.WithErrLogger.
+func warnIfNoHooks() {
+	if hooksRegistered() {
+		return
+	}
+	logger.ErrLogf("hotload:", "no hooks registered; unlike hotload v1, v3 does not export prometheus metrics unless enabled — "+
+		"import github.com/infobloxopen/hotload/observability and call observability.MustEnablePrometheus(nil) before opening connections (see MIGRATION.md)")
 }
 
 func parseGroupParams(vs url.Values) (forceKill bool, killWindow time.Duration, err error) {

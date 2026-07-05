@@ -41,6 +41,17 @@ func main() {
 }
 ```
 
+With a nil (default) registerer the call is idempotent: the first call wins
+and later calls return the same collectors, so an application and a shared
+library can both enable metrics defensively without a duplicate-registration
+panic. Explicit registerers register fresh collectors on every call.
+
+As a safety net, if the first watch starts with no hooks registered at all,
+hotload logs a one-time notice through its error logger (visible by default)
+pointing at this section — so forgetting the call above shows up in logs
+instead of as silently empty dashboards. Registering any hooks, or replacing
+the error logger via `logger.WithErrLogger`, silences it.
+
 Metric names, labels, and the `HOTLOAD_PATH_CHKSUM_METRICS_ENABLE` gate are
 identical to v1:
 
