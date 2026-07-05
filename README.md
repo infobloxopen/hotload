@@ -1,5 +1,15 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/infobloxopen/hotload.svg)](https://pkg.go.dev/github.com/infobloxopen/hotload)
 # hotload
+
+> [!IMPORTANT]
+> **This is the `release-1.x` maintenance branch** (hotload v1, import path
+> `github.com/infobloxopen/hotload`). It receives security and critical bug
+> fixes only; new development happens on
+> [`main`](https://github.com/infobloxopen/hotload/tree/main), which is
+> hotload **v3** (`github.com/infobloxopen/hotload/v3`). Existing v1 imports
+> keep working and keep receiving `v1.7.x` patch releases from this branch;
+> see [MIGRATION.md](https://github.com/infobloxopen/hotload/blob/main/MIGRATION.md)
+> on main when you are ready to upgrade.
 Hotload is a Golang `database/sql` compatible package that supports dynamic reloading
 of database configuration. In the typical use of `sql.Open()`, users must
 close the returned DB object and recreate it to change the
