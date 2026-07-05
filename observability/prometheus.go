@@ -124,7 +124,11 @@ func (c *Collectors) Hooks() hotload.Hooks {
 			c.HotloadModtimeLatencyHistogram.WithLabelValues(ev.Strategy, ev.Path).Observe(ev.Latency.Seconds())
 		},
 		OnWatch: func(ev hotload.WatchEvent) {
-			if !ev.Closed {
+			// Only fsnotify watches local files; other strategies' paths
+			// (Kubernetes Secret names, etcd keys, ...) are not hashable.
+			// File-backed strategies outside this repo can call
+			// Collectors.HotloadPathChksumTimestampSeconds.AddPath directly.
+			if !ev.Closed && ev.Strategy == "fsnotify" {
 				c.HotloadPathChksumTimestampSeconds.AddPath(ev.Path)
 			}
 		},
