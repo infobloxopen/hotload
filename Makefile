@@ -20,8 +20,11 @@ vet: fmt
 build: vet
 	go build ./...
 
+# go install builds the version pinned in go.mod; an unpinned `go get`
+# resolves the latest ginkgo, which can require a newer Go than the CI
+# image ships (that is how this target broke in CI).
 get-ginkgo:
-	go get github.com/onsi/ginkgo/v2/ginkgo
+	go install github.com/onsi/ginkgo/v2/ginkgo
 
 test: vet get-ginkgo go-test
 
