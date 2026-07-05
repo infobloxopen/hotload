@@ -3,7 +3,7 @@ module github.com/infobloxopen/hotload/k8ssecret
 go 1.23.0
 
 require (
-	github.com/infobloxopen/hotload/v3 v3.0.0-rc.1
+	github.com/infobloxopen/hotload/v3 v3.0.0
 	k8s.io/api v0.32.3
 	k8s.io/apimachinery v0.32.3
 	k8s.io/client-go v0.32.3
